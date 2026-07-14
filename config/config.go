@@ -15,7 +15,7 @@ const (
 	// configFileName is the name of the configuration file.
 	configFileName = "config.json"
 	// defaultServerURL is used when no SERVER_URL env var is set.
-	defaultServerURL = "http://localhost:8080"
+	defaultServerURL = "https://pchat-backend.onrender.com"
 )
 
 // ConfigData holds all persistent state for the CLI client.

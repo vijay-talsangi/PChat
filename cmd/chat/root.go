@@ -9,11 +9,17 @@ import (
 	"github.com/vijay-talsangi/PChat/config"
 )
 
-var cfg *config.ConfigData
+var (
+	cfg     *config.ConfigData
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
+)
 
 var rootCmd = &cobra.Command{
-	Use:   "chat",
-	Short: "P2P encrypted terminal chat",
+	Use:     "chat",
+	Short:   "P2P encrypted terminal chat",
+	Version: version,
 	Long: `End-to-end encrypted peer-to-peer chat over WebRTC DataChannels.
 Messages are encrypted with AES-256-GCM and never stored server-side.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {

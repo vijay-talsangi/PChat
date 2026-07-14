@@ -1,10 +1,125 @@
-# p2p-chat-cli
+# PChat — P2P Encrypted Terminal Chat
 
-Encrypted P2P terminal chat client. Uses WebRTC DataChannels for direct peer-to-peer communication with end-to-end encryption. No message history, no server-side message storage — messages exist only in memory for currently connected peers.
+[![Go](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go)](https://go.dev)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/vijay-talsangi/PChat)](https://github.com/vijay-talsangi/PChat/releases/latest)
+
+**PChat** is an end-to-end encrypted peer-to-peer terminal chat client. It uses WebRTC DataChannels for direct peer-to-peer communication with no server-side message storage — messages exist only in memory for currently connected peers.
+
+---
+
+## Installation
+
+### Option 1: Download a prebuilt binary (recommended)
+
+Download the latest archive for your platform from the [Releases page](https://github.com/vijay-talsangi/PChat/releases/latest).
+
+| Platform | Archive |
+|----------|---------|
+| Linux x86_64 | `chat_Linux_x86_64.tar.gz` |
+| Linux ARM64 | `chat_Linux_arm64.tar.gz` |
+| macOS Intel | `chat_Darwin_x86_64.tar.gz` |
+| macOS Apple Silicon | `chat_Darwin_arm64.tar.gz` |
+| Windows x86_64 | `chat_Windows_x86_64.zip` |
+
+**Linux / macOS**
+```bash
+tar -xzf chat_*.tar.gz
+sudo mv chat /usr/local/bin/
+```
+
+**Windows** — Extract the `.zip` and add the folder to your `PATH`.
+
+### Option 2: `go install`
+
+```bash
+go install github.com/vijay-talsangi/PChat/cmd/chat@latest
+```
+
+The binary is placed in `$GOPATH/bin` (or `$HOME/go/bin` by default). Ensure that directory is in your `PATH`.
+
+### Option 3: Build from source
+
+**Prerequisites:** Go 1.22+
+
+```bash
+git clone https://github.com/vijay-talsangi/PChat.git
+cd PChat
+make build
+```
+
+The binary is placed at `./bin/chat`. Move it to your `PATH`:
+
+```bash
+mv bin/chat ~/.local/bin/
+```
+
+---
+
+## Quick Start
+
+1. **Register an account**
+   ```bash
+   chat register
+   ```
+   X25519 and Ed25519 keypairs are generated locally. Private keys never leave your machine.
+
+2. **Create a room**
+   ```bash
+   chat room create "my-room"
+   ```
+
+3. **Generate an invite code** and share it with a friend
+   ```bash
+   chat invite "my-room"
+   ```
+
+4. **Your friend joins** using the invite code
+   ```bash
+   chat room join INVITE_CODE
+   ```
+
+5. **Enter the chat room**
+   ```bash
+   chat enter "my-room"
+   ```
+
+6. **Type a message** and press Enter. It is encrypted end-to-end and sent over a direct WebRTC DataChannel.
+
+---
+
+## CLI Commands
+
+```
+chat register                           Create a new account
+chat login                              Log in with existing credentials
+chat logout                             Clear local session
+chat whoami                             Show current user info
+
+chat room create "Room Name"            Create a new chat room
+chat room list                          List your rooms
+chat room join INVITE_CODE              Join via invite code
+chat room leave "Room Name"             Leave a room
+chat room delete "Room Name"            Delete a room (owner only)
+
+chat invite "Room Name"                 Generate an invite code
+
+chat enter "Room Name"                  Enter interactive chat session
+```
+
+### Interactive Session Commands
+
+```
+/members         List connected peers
+/help            Show available commands
+/exit            Leave the room
+```
+
+---
 
 ## Architecture
 
-### Encryption Layers
+### Encryption layers
 
 1. **X25519** — key exchange for room key distribution
 2. **Ed25519** — message signing for sender identity verification
@@ -15,66 +130,21 @@ Encrypted P2P terminal chat client. Uses WebRTC DataChannels for direct peer-to-
 
 1. User registers with the backend, sending only public X25519/Ed25519 keys
 2. Room creator generates a random AES-256 room key
-3. Room key is encrypted to each member's X25519 public key (sealed box)
+3. Room key is encrypted for each member's X25519 public key (sealed box)
 4. Only ciphertext is stored on the server
 5. When entering a room, peers connect via WebRTC DataChannels
 6. Every message is AES-256-GCM encrypted with a fresh nonce, then signed with Ed25519
 7. Recipients verify the signature, check nonce uniqueness, then decrypt
 
-## CLI Commands
+---
 
-```bash
-chat register                           # Create a new account
-chat login                              # Log in with existing credentials
-chat logout                             # Clear local session
-chat whoami                             # Show current user info
+## Configuration
 
-chat room create "Room Name"            # Create a new chat room
-chat room list                          # List your rooms
-chat room join INVITE_CODE              # Join via invite code
-chat room leave "Room Name"             # Leave a room
-chat room delete "Room Name"            # Delete a room (owner only)
-
-chat invite "Room Name"                 # Generate an invite code
-
-chat enter "Room Name"                  # Enter interactive chat session
-```
-
-### Interactive Session Commands
-
-```
-/members         — List connected peers
-/help            — Show available commands
-/exit            — Leave the room
-```
-
-## Setup
-
-### Prerequisites
-
-- Go 1.22+
-
-### Build & Install
-
-```bash
-git clone <repo-url> p2p-chat-cli
-cd p2p-chat-cli
-make build
-```
-
-The binary will be placed at `./chat`. You can move it to your `$PATH`:
-
-```bash
-mv chat ~/.local/bin/  # or /usr/local/bin/
-```
-
-### Configuration
-
-Created automatically at `~/.chat/config.json`:
+Configuration is stored at `~/.chat/config.json`:
 
 ```json
 {
-  "server_url": "http://localhost:8080",
+  "server_url": "https://pchat-backend.onrender.com",
   "jwt": "",
   "user_id": "",
   "username": "",
@@ -85,15 +155,15 @@ Created automatically at `~/.chat/config.json`:
 }
 ```
 
-Set the server URL via environment variable:
+Set the server URL via the `SERVER_URL` environment variable:
 
 ```bash
 export SERVER_URL=https://your-server.com
 ```
 
-Or set it directly in the config file.
+---
 
-## Key Management
+## Key management
 
 - X25519 and Ed25519 keypairs are generated locally on registration
 - Private keys are stored in `~/.chat/config.json` with `0600` permissions
@@ -101,11 +171,40 @@ Or set it directly in the config file.
 - Room AES keys are stored encrypted (sealed to your X25519 key) on the server
 - On room entry, your local client decrypts the room key using your X25519 private key
 
-## Makefile Targets
+---
+
+## Development
+
+### Makefile targets
 
 ```bash
-make build       # Build the CLI binary
-make run         # Run the CLI (alias for build + execute)
+make build       # Build for current platform
+make build-all   # Cross-compile for all supported platforms
+make run         # Run the CLI
 make clean       # Remove build artifacts
-make install     # Build and copy to $GOPATH/bin
+make install     # go install into $GOPATH/bin
+make test        # Run tests
+make lint        # Run go vet
 ```
+
+### Cross-compilation
+
+```bash
+make build-all
+```
+
+Output binaries are placed in the `bin/` directory:
+
+```
+bin/chat-linux-amd64
+bin/chat-linux-arm64
+bin/chat-darwin-amd64
+bin/chat-darwin-arm64
+bin/chat-windows-amd64.exe
+```
+
+---
+
+## License
+
+[MIT](LICENSE)

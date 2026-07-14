@@ -1,5 +1,32 @@
+# Binaries
 bin/
 *.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
 *.test
+
+# Output files
 *.out
+*.prof
+
+# Environment
 .env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dist
+dist/
