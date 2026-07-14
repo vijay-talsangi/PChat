@@ -1,15 +1,16 @@
 .PHONY: build run clean install
 
-BINARY=chat
+BINARY=bin/chat
 
 build:
+	mkdir -p bin
 	go build -o $(BINARY) ./cmd/chat
 
 run: build
 	./$(BINARY)
 
 clean:
-	rm -f $(BINARY)
+	rm -rf bin
 
 install: build
-	cp $(BINARY) $(GOPATH)/bin/$(BINARY)
+	cp $(BINARY) $(GOPATH)/bin/chat

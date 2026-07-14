@@ -52,13 +52,13 @@ func (p *Peer) Start() error {
 	if err := m.RegisterDefaultCodecs(); err != nil {
 		return fmt.Errorf("failed to register codecs: %w", err)
 	}
-	api := webrtc.NewAPI(webrtc.WithMediaEngine(&m))
+	webrtcAPI := webrtc.NewAPI(webrtc.WithMediaEngine(&m))
 
 	config := webrtc.Configuration{
 		ICEServers: p.config.ICEServers,
 	}
 
-	pc, err := api.NewPeerConnection(config)
+	pc, err := webrtcAPI.NewPeerConnection(config)
 	if err != nil {
 		return fmt.Errorf("failed to create peer connection: %w", err)
 	}
