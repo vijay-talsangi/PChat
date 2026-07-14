@@ -57,7 +57,7 @@ var roomListCmd = &cobra.Command{
 			return fmt.Errorf("failed to list rooms: %w", err)
 		}
 		if len(rooms) == 0 {
-			fmt.Println("No rooms. Create one with 'chat room create <name>'")
+			fmt.Println("No rooms. Create one with 'pchat room create <name>'")
 			return nil
 		}
 		for _, r := range rooms {

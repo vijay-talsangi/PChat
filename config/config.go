@@ -1,4 +1,4 @@
-// Package config manages the local configuration file stored at ~/.chat/config.json.
+// Package config manages the local configuration file stored at ~/.pchat/config.json.
 // It handles loading, saving, and providing defaults for the CLI application's
 // persistent state including authentication tokens, cryptographic keys, and room keys.
 package config
@@ -11,7 +11,9 @@ import (
 
 const (
 	// configDirName is the hidden directory name under the user's home directory.
-	configDirName = ".chat"
+	configDirName = ".pchat"
+	// legacyConfigDirName preserves compatibility with older installs.
+	legacyConfigDirName = ".chat"
 	// configFileName is the name of the configuration file.
 	configFileName = "config.json"
 	// defaultServerURL is used when no SERVER_URL env var is set.
@@ -40,7 +42,7 @@ type ConfigData struct {
 	RoomKeys map[string]string `json:"room_keys,omitempty"`
 }
 
-// GetConfigPath returns the full path to the config file (~/.chat/config.json).
+// GetConfigPath returns the full path to the config file (~/.pchat/config.json).
 func GetConfigPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -50,9 +52,18 @@ func GetConfigPath() string {
 	return filepath.Join(home, configDirName, configFileName)
 }
 
-// getConfigDir returns the path to the config directory (~/.chat/).
+// getConfigDir returns the path to the config directory (~/.pchat/).
 func getConfigDir() string {
 	return filepath.Dir(GetConfigPath())
+}
+
+// getLegacyConfigPath returns the old config path used by previous releases.
+func getLegacyConfigPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = "."
+	}
+	return filepath.Join(home, legacyConfigDirName, configFileName)
 }
 
 // EnsureConfigDir creates the config directory if it does not exist.
@@ -62,7 +73,7 @@ func EnsureConfigDir() error {
 	return os.MkdirAll(dir, 0700)
 }
 
-// Load reads the configuration from ~/.chat/config.json.
+// Load reads the configuration from ~/.pchat/config.json.
 // If the file does not exist, a new ConfigData with default values is returned.
 // The config directory is created if it doesn't already exist.
 func Load() (*ConfigData, error) {
@@ -74,10 +85,18 @@ func Load() (*ConfigData, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// Return a fresh config with defaults when no file exists.
-			return defaultConfig(), nil
+			legacyPath := getLegacyConfigPath()
+			data, err = os.ReadFile(legacyPath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					// Return a fresh config with defaults when no file exists.
+					return defaultConfig(), nil
+				}
+				return nil, err
+			}
+		} else {
+			return nil, err
 		}
-		return nil, err
 	}
 
 	cfg := &ConfigData{}
@@ -85,10 +104,8 @@ func Load() (*ConfigData, error) {
 		return nil, err
 	}
 
-	// Ensure the server URL is always populated.
-	if cfg.ServerURL == "" {
-		cfg.ServerURL = resolveServerURL()
-	}
+	// Always prefer the configured default server URL source over any saved value.
+	cfg.ServerURL = resolveServerURL()
 
 	// Ensure the room keys map is initialized.
 	if cfg.RoomKeys == nil {
@@ -98,7 +115,7 @@ func Load() (*ConfigData, error) {
 	return cfg, nil
 }
 
-// Save writes the configuration to ~/.chat/config.json with 0600 permissions
+// Save writes the configuration to ~/.pchat/config.json with 0600 permissions
 // (owner read/write only) to protect sensitive data like private keys and tokens.
 func Save(cfg *ConfigData) error {
 	if err := EnsureConfigDir(); err != nil {

@@ -1,15 +1,15 @@
 version: 2
 
-project_name: chat
+project_name: pchat
 
 before:
   hooks:
     - go mod tidy
 
 builds:
-  - id: chat
-    main: ./cmd/chat
-    binary: chat
+  - id: pchat
+    main: ./cmd/pchat
+    binary: pchat
     env:
       - CGO_ENABLED=0
     goos:
@@ -23,7 +23,7 @@ builds:
       - "7"
     ignore: []
     ldflags:
-      - -s -w -X github.com/vijay-talsangi/PChat/cmd/chat.version={{.Version}} -X github.com/vijay-talsangi/PChat/cmd/chat.commit={{.Commit}} -X github.com/vijay-talsangi/PChat/cmd/chat.date={{.Date}}
+      - -s -w -X github.com/vijay-talsangi/PChat/cmd/pchat.version={{.Version}} -X github.com/vijay-talsangi/PChat/cmd/pchat.commit={{.Commit}} -X github.com/vijay-talsangi/PChat/cmd/pchat.date={{.Date}}
 
 archives:
   - formats:

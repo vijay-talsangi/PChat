@@ -17,7 +17,7 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:     "chat",
+	Use:     "pchat",
 	Short:   "P2P encrypted terminal chat",
 	Version: version,
 	Long: `End-to-end encrypted peer-to-peer chat over WebRTC DataChannels.

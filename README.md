@@ -16,16 +16,16 @@ Download the latest archive for your platform from the [Releases page](https://g
 
 | Platform | Archive |
 |----------|---------|
-| Linux x86_64 | `chat_Linux_x86_64.tar.gz` |
-| Linux ARM64 | `chat_Linux_arm64.tar.gz` |
-| macOS Intel | `chat_Darwin_x86_64.tar.gz` |
-| macOS Apple Silicon | `chat_Darwin_arm64.tar.gz` |
-| Windows x86_64 | `chat_Windows_x86_64.zip` |
+| Linux x86_64 | `pchat_Linux_x86_64.tar.gz` |
+| Linux ARM64 | `pchat_Linux_arm64.tar.gz` |
+| macOS Intel | `pchat_Darwin_x86_64.tar.gz` |
+| macOS Apple Silicon | `pchat_Darwin_arm64.tar.gz` |
+| Windows x86_64 | `pchat_Windows_x86_64.zip` |
 
 **Linux / macOS**
 ```bash
-tar -xzf chat_*.tar.gz
-sudo mv chat /usr/local/bin/
+tar -xzf pchat_*.tar.gz
+sudo mv pchat /usr/local/bin/
 ```
 
 **Windows** — Extract the `.zip` and add the folder to your `PATH`.
@@ -33,7 +33,7 @@ sudo mv chat /usr/local/bin/
 ### Option 2: `go install`
 
 ```bash
-go install github.com/vijay-talsangi/PChat/cmd/chat@latest
+go install github.com/vijay-talsangi/PChat/cmd/pchat@latest
 ```
 
 The binary is placed in `$GOPATH/bin` (or `$HOME/go/bin` by default). Ensure that directory is in your `PATH`.
@@ -48,10 +48,10 @@ cd PChat
 make build
 ```
 
-The binary is placed at `./bin/chat`. Move it to your `PATH`:
+The binary is placed at `./bin/pchat`. Move it to your `PATH`:
 
 ```bash
-mv bin/chat ~/.local/bin/
+mv bin/pchat ~/.local/bin/
 ```
 
 ---
@@ -60,28 +60,28 @@ mv bin/chat ~/.local/bin/
 
 1. **Register an account**
    ```bash
-   chat register
+   pchat register
    ```
    X25519 and Ed25519 keypairs are generated locally. Private keys never leave your machine.
 
 2. **Create a room**
    ```bash
-   chat room create "my-room"
+   pchat room create "my-room"
    ```
 
 3. **Generate an invite code** and share it with a friend
    ```bash
-   chat invite "my-room"
+   pchat invite "my-room"
    ```
 
 4. **Your friend joins** using the invite code
    ```bash
-   chat room join INVITE_CODE
+   pchat room join INVITE_CODE
    ```
 
 5. **Enter the chat room**
    ```bash
-   chat enter "my-room"
+   pchat enter "my-room"
    ```
 
 6. **Type a message** and press Enter. It is encrypted end-to-end and sent over a direct WebRTC DataChannel.
@@ -91,20 +91,20 @@ mv bin/chat ~/.local/bin/
 ## CLI Commands
 
 ```
-chat register                           Create a new account
-chat login                              Log in with existing credentials
-chat logout                             Clear local session
-chat whoami                             Show current user info
+pchat register                          Create a new account
+pchat login                             Log in with existing credentials
+pchat logout                            Clear local session
+pchat whoami                            Show current user info
 
-chat room create "Room Name"            Create a new chat room
-chat room list                          List your rooms
-chat room join INVITE_CODE              Join via invite code
-chat room leave "Room Name"             Leave a room
-chat room delete "Room Name"            Delete a room (owner only)
+pchat room create "Room Name"           Create a new chat room
+pchat room list                         List your rooms
+pchat room join INVITE_CODE             Join via invite code
+pchat room leave "Room Name"            Leave a room
+pchat room delete "Room Name"           Delete a room (owner only)
 
-chat invite "Room Name"                 Generate an invite code
+pchat invite "Room Name"                Generate an invite code
 
-chat enter "Room Name"                  Enter interactive chat session
+pchat enter "Room Name"                 Enter interactive chat session
 ```
 
 ### Interactive Session Commands
@@ -140,7 +140,7 @@ chat enter "Room Name"                  Enter interactive chat session
 
 ## Configuration
 
-Configuration is stored at `~/.chat/config.json`:
+Configuration is stored at `~/.pchat/config.json`:
 
 ```json
 {
@@ -166,7 +166,7 @@ export SERVER_URL=https://your-server.com
 ## Key management
 
 - X25519 and Ed25519 keypairs are generated locally on registration
-- Private keys are stored in `~/.chat/config.json` with `0600` permissions
+- Private keys are stored in `~/.pchat/config.json` with `0600` permissions
 - Private keys **never** leave your machine
 - Room AES keys are stored encrypted (sealed to your X25519 key) on the server
 - On room entry, your local client decrypts the room key using your X25519 private key
@@ -196,11 +196,11 @@ make build-all
 Output binaries are placed in the `bin/` directory:
 
 ```
-bin/chat-linux-amd64
-bin/chat-linux-arm64
-bin/chat-darwin-amd64
-bin/chat-darwin-arm64
-bin/chat-windows-amd64.exe
+bin/pchat-linux-amd64
+bin/pchat-linux-arm64
+bin/pchat-darwin-amd64
+bin/pchat-darwin-arm64
+bin/pchat-windows-amd64.exe
 ```
 
 ---
