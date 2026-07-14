@@ -3,6 +3,7 @@ package chat
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"sync"
@@ -41,6 +42,7 @@ type Session struct {
 	members  map[string]string
 	mu       sync.RWMutex
 	done     chan struct{}
+	prompt   string
 }
 
 func NewSession(cfg SessionConfig) *Session {
@@ -56,16 +58,16 @@ func (s *Session) Start() error {
 	turnCreds, turnErr := s.cfg.APIClient.GetTurnCredentials(s.cfg.RoomName)
 	if turnErr == nil && turnCreds != nil {
 		ics = rtc.BuildICEServers(turnCreds)
+	} else if turnErr != nil {
+		log.Printf("[session] TURN credentials unavailable (non-fatal): %v", turnErr)
 	}
 
-	wsClient, err := api.Connect(s.cfg.ServerURL, s.cfg.Token)
+	wsClient, err := api.Connect(s.cfg.ServerURL, s.cfg.Token, s.cfg.RoomName)
 	if err != nil {
 		return fmt.Errorf("failed to connect to signaling server: %w", err)
 	}
 	s.wsClient = wsClient
 	defer wsClient.Close()
-
-	go s.handleWebSocketMessages()
 
 	peer := rtc.NewPeer(rtc.PeerConfig{
 		UserID:     s.cfg.UserID,
@@ -78,6 +80,14 @@ func (s *Session) Start() error {
 		OnMessage:  s.onMessage,
 		OnPeerJoined: func(userID string) {
 			s.loadMemberKeys()
+			s.mu.RLock()
+			username := s.members[userID]
+			s.mu.RUnlock()
+			if username != "" && username != s.cfg.Username {
+				ClearLine()
+				PrintSystem(fmt.Sprintf("Peer joined: %s", username))
+				fmt.Print(s.prompt)
+			}
 		},
 		OnPeerLeft: func(userID string) {
 			s.mu.Lock()
@@ -85,11 +95,15 @@ func (s *Session) Start() error {
 			delete(s.members, userID)
 			s.mu.Unlock()
 			if username != "" {
+				ClearLine()
 				PrintSystem(fmt.Sprintf("Peer left: %s", username))
+				fmt.Print(s.prompt)
 			}
 		},
 		OnError: func(err error) {
+			ClearLine()
 			PrintError(fmt.Sprintf("RTC error: %v", err))
+			fmt.Print(s.prompt)
 		},
 	})
 
@@ -102,13 +116,13 @@ func (s *Session) Start() error {
 	s.loadMemberKeys()
 
 	scanner := bufio.NewScanner(os.Stdin)
-	prompt := fmt.Sprintf("%s> ", s.cfg.RoomName)
-	fmt.Print(prompt)
+	s.prompt = fmt.Sprintf("%s> ", s.cfg.RoomName)
+	fmt.Print(s.prompt)
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
-			fmt.Print(prompt)
+			fmt.Print(s.prompt)
 			continue
 		}
 
@@ -120,59 +134,39 @@ func (s *Session) Start() error {
 
 		case line == "/help":
 			PrintHelp()
-			fmt.Print(prompt)
+			fmt.Print(s.prompt)
 			continue
 
 		case line == "/members":
 			s.showMembers()
-			fmt.Print(prompt)
+			fmt.Print(s.prompt)
 			continue
 
 		case strings.HasPrefix(line, "/"):
+			ClearLine()
 			PrintError(fmt.Sprintf("Unknown command: %s", line))
-			fmt.Print(prompt)
+			fmt.Print(s.prompt)
 			continue
 
 		default:
 			if err := peer.SendMessage([]byte(line)); err != nil {
+				ClearLine()
 				PrintError(fmt.Sprintf("Failed to send: %v", err))
 			} else {
+				ClearLine()
 				PrintOwnMessage(line)
 			}
-			fmt.Print(prompt)
+			fmt.Print(s.prompt)
 		}
 	}
 
 	return scanner.Err()
 }
 
-func (s *Session) handleWebSocketMessages() {
-	for {
-		select {
-		case msg, ok := <-s.wsClient.Recv:
-			if !ok {
-				return
-			}
-			switch msg.Type {
-			case "peer-joined":
-				s.loadMemberKeys()
-			case "peer-left":
-				s.mu.Lock()
-				username := s.members[msg.From]
-				delete(s.members, msg.From)
-				s.mu.Unlock()
-				if username != "" {
-					PrintSystem(fmt.Sprintf("Peer disconnected: %s", username))
-				}
-			}
-		case <-s.done:
-			return
-		}
-	}
-}
-
 func (s *Session) onMessage(senderUsername string, plaintext []byte) {
+	ClearLine()
 	PrintMessage(senderUsername, string(plaintext))
+	fmt.Print(s.prompt)
 }
 
 func (s *Session) loadMemberKeys() {

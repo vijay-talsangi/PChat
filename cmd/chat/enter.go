@@ -71,8 +71,7 @@ var enterCmd = &cobra.Command{
 			MembersFunc: fetchMembers,
 		})
 
-		session.Start()
-		return nil
+		return session.Start()
 	},
 }
 

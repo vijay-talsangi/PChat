@@ -13,6 +13,11 @@ import (
 	pcrypto "github.com/vijay-talsangi/PChat/crypto"
 )
 
+var (
+	ErrNoPeerConnection  = fmt.Errorf("peer connection not initialized")
+	ErrDataChannelClosed = fmt.Errorf("data channel not open")
+)
+
 type PeerConfig struct {
 	UserID       string
 	Username     string
@@ -48,6 +53,8 @@ func NewPeer(cfg PeerConfig) *Peer {
 }
 
 func (p *Peer) Start() error {
+	log.Printf("[rtc] Start() called for user %s in room %s", p.config.UserID, p.config.RoomName)
+
 	m := webrtc.MediaEngine{}
 	if err := m.RegisterDefaultCodecs(); err != nil {
 		return fmt.Errorf("failed to register codecs: %w", err)
@@ -65,19 +72,43 @@ func (p *Peer) Start() error {
 	p.pc = pc
 
 	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
-		log.Printf("[rtc] ICE state: %s", state)
+		log.Printf("[rtc] ICE connection state change: %s", state)
 		switch state {
 		case webrtc.ICEConnectionStateConnected:
+			log.Printf("[rtc] ICE connection established")
 			p.mu.Lock()
 			p.connected = true
 			p.mu.Unlock()
 		case webrtc.ICEConnectionStateDisconnected:
 			fallthrough
 		case webrtc.ICEConnectionStateFailed:
+			log.Printf("[rtc] ICE connection lost: %s", state)
 			p.mu.Lock()
 			p.connected = false
 			p.mu.Unlock()
 		}
+	})
+
+	pc.OnICECandidate(func(candidate *webrtc.ICECandidate) {
+		if candidate == nil {
+			log.Printf("[rtc] ICE candidate gathering complete")
+			return
+		}
+		candJSON, err := json.Marshal(candidate.ToJSON())
+		if err != nil {
+			log.Printf("[rtc] failed to marshal ICE candidate: %v", err)
+			return
+		}
+		log.Printf("[rtc] ICE candidate sent: %s", candidate.ToJSON().Candidate)
+		p.config.WSClient.SendMsg(api.SignalMessage{
+			Type:    "ice-candidate",
+			Room:    p.config.RoomName,
+			Payload: candJSON,
+		})
+	})
+
+	pc.OnSignalingStateChange(func(state webrtc.SignalingState) {
+		log.Printf("[rtc] signaling state: %s", state)
 	})
 
 	dc, err := pc.CreateDataChannel("chat", nil)
@@ -87,7 +118,7 @@ func (p *Peer) Start() error {
 	p.dc = dc
 
 	dc.OnOpen(func() {
-		log.Printf("[rtc] DataChannel open")
+		log.Printf("[rtc] DataChannel OnOpen")
 	})
 
 	dc.OnMessage(func(msg webrtc.DataChannelMessage) {
@@ -104,7 +135,11 @@ func (p *Peer) Start() error {
 	})
 
 	pc.OnDataChannel(func(d *webrtc.DataChannel) {
-		log.Printf("[rtc] remote DataChannel: %s", d.Label())
+		log.Printf("[rtc] remote DataChannel received: %s", d.Label())
+		p.dc = d
+		d.OnOpen(func() {
+			log.Printf("[rtc] remote DataChannel OnOpen: %s", d.Label())
+		})
 		d.OnMessage(func(msg webrtc.DataChannelMessage) {
 			sender, plaintext, err := DecodeMessage(msg.Data, p.config.RoomKey, p.nonceTracker, p.getSigningKeys())
 			if err != nil {
@@ -119,66 +154,25 @@ func (p *Peer) Start() error {
 		})
 	})
 
-	offer, err := pc.CreateOffer(nil)
-	if err != nil {
-		return fmt.Errorf("failed to create offer: %w", err)
-	}
-	if err := pc.SetLocalDescription(offer); err != nil {
-		return fmt.Errorf("failed to set local description: %w", err)
-	}
-
-	offerJSON, err := json.Marshal(offer)
-	if err != nil {
-		return fmt.Errorf("failed to marshal offer: %w", err)
-	}
-	p.config.WSClient.SendMsg(api.SignalMessage{
-		Type:    "offer",
-		Room:    p.config.RoomName,
-		Payload: offerJSON,
-	})
-
-	pc.OnICECandidate(func(candidate *webrtc.ICECandidate) {
-		if candidate == nil {
-			return
-		}
-		candJSON, err := json.Marshal(candidate.ToJSON())
-		if err != nil {
-			return
-		}
-		p.config.WSClient.SendMsg(api.SignalMessage{
-			Type:    "ice-candidate",
-			Room:    p.config.RoomName,
-			Payload: candJSON,
-		})
-	})
-
 	go p.handleSignaling()
 
+	log.Printf("[rtc] Start() complete, waiting for peers...")
 	return nil
 }
 
 func (p *Peer) handleSignaling() {
+	log.Printf("[rtc] signaling handler started")
 	for {
 		select {
 		case msg, ok := <-p.config.WSClient.Recv:
 			if !ok {
+				log.Printf("[rtc] signaling channel closed")
 				return
 			}
-			switch msg.Type {
-			case "answer":
-				var answer webrtc.SessionDescription
-				if err := json.Unmarshal(msg.Payload, &answer); err != nil {
-					log.Printf("[rtc] failed to unmarshal answer: %v", err)
-					continue
-				}
-				p.mu.Lock()
-				err := p.pc.SetRemoteDescription(answer)
-				p.mu.Unlock()
-				if err != nil {
-					log.Printf("[rtc] failed to set remote description: %v", err)
-				}
 
+			switch msg.Type {
 			case "offer":
+				log.Printf("[rtc] offer received from %s", msg.From)
 				var offer webrtc.SessionDescription
 				if err := json.Unmarshal(msg.Payload, &offer); err != nil {
 					log.Printf("[rtc] failed to unmarshal offer: %v", err)
@@ -188,22 +182,24 @@ func (p *Peer) handleSignaling() {
 				err := p.pc.SetRemoteDescription(offer)
 				p.mu.Unlock()
 				if err != nil {
-					log.Printf("[rtc] failed to set remote description: %v", err)
+					log.Printf("[rtc] SetRemoteDescription(offer) failed: %v", err)
 					continue
 				}
+				log.Printf("[rtc] remote description set from offer, creating answer")
 				answer, err := p.pc.CreateAnswer(nil)
 				if err != nil {
-					log.Printf("[rtc] failed to create answer: %v", err)
+					log.Printf("[rtc] CreateAnswer failed: %v", err)
 					continue
 				}
 				p.mu.Lock()
 				err = p.pc.SetLocalDescription(answer)
 				p.mu.Unlock()
 				if err != nil {
-					log.Printf("[rtc] failed to set local description: %v", err)
+					log.Printf("[rtc] SetLocalDescription(answer) failed: %v", err)
 					continue
 				}
 				answerJSON, _ := json.Marshal(answer)
+				log.Printf("[rtc] answer sent to %s", msg.From)
 				p.config.WSClient.SendMsg(api.SignalMessage{
 					Type:    "answer",
 					Room:    p.config.RoomName,
@@ -211,45 +207,112 @@ func (p *Peer) handleSignaling() {
 					Payload: answerJSON,
 				})
 
+			case "answer":
+				log.Printf("[rtc] answer received from %s", msg.From)
+				var answer webrtc.SessionDescription
+				if err := json.Unmarshal(msg.Payload, &answer); err != nil {
+					log.Printf("[rtc] failed to unmarshal answer: %v", err)
+					continue
+				}
+				p.mu.Lock()
+				err := p.pc.SetRemoteDescription(answer)
+				p.mu.Unlock()
+				if err != nil {
+					log.Printf("[rtc] SetRemoteDescription(answer) failed: %v", err)
+				} else {
+					log.Printf("[rtc] remote description set from answer")
+				}
+
 			case "ice-candidate":
 				var candidate webrtc.ICECandidateInit
 				if err := json.Unmarshal(msg.Payload, &candidate); err != nil {
 					log.Printf("[rtc] failed to unmarshal ICE candidate: %v", err)
 					continue
 				}
+				log.Printf("[rtc] ICE candidate received: %s", candidate.Candidate)
 				p.mu.Lock()
 				err := p.pc.AddICECandidate(candidate)
 				p.mu.Unlock()
 				if err != nil {
-					log.Printf("[rtc] failed to add ICE candidate: %v", err)
+					log.Printf("[rtc] AddICECandidate failed: %v", err)
 				}
 
 			case "peer-joined":
+				log.Printf("[rtc] peer-joined notification: %s", msg.From)
 				if p.config.OnPeerJoined != nil {
 					p.config.OnPeerJoined(msg.From)
 				}
+				p.createOfferForPeer(msg.From)
 
 			case "peer-left":
+				log.Printf("[rtc] peer-left notification: %s", msg.From)
 				if p.config.OnPeerLeft != nil {
 					p.config.OnPeerLeft(msg.From)
 				}
 
 			case "room-peers":
 				var peers []map[string]interface{}
-				if err := json.Unmarshal(msg.Payload, &peers); err == nil {
-					for _, peer := range peers {
-						if peerID, ok := peer["user_id"].(string); ok && peerID != p.config.UserID {
-							if p.config.OnPeerJoined != nil {
-								p.config.OnPeerJoined(peerID)
-							}
+				if err := json.Unmarshal(msg.Payload, &peers); err != nil {
+					log.Printf("[rtc] failed to unmarshal room-peers: %v", err)
+					continue
+				}
+				log.Printf("[rtc] room-peers received: %d peer(s)", len(peers))
+				for _, peer := range peers {
+					if peerID, ok := peer["user_id"].(string); ok && peerID != p.config.UserID {
+						log.Printf("[rtc] room contains peer: %s", peerID)
+						if p.config.OnPeerJoined != nil {
+							p.config.OnPeerJoined(peerID)
 						}
 					}
 				}
+
+			default:
+				log.Printf("[rtc] unknown message type: %s", msg.Type)
 			}
 		case <-p.stopCh:
+			log.Printf("[rtc] signaling handler stopped")
 			return
 		}
 	}
+}
+
+func (p *Peer) createOfferForPeer(targetUserID string) {
+	log.Printf("[rtc] CreateOffer for peer %s", targetUserID)
+
+	offer, err := p.pc.CreateOffer(nil)
+	if err != nil {
+		log.Printf("[rtc] CreateOffer failed: %v", err)
+		if p.config.OnError != nil {
+			p.config.OnError(fmt.Errorf("failed to create offer: %w", err))
+		}
+		return
+	}
+	log.Printf("[rtc] offer created, setting local description")
+
+	p.mu.Lock()
+	err = p.pc.SetLocalDescription(offer)
+	p.mu.Unlock()
+	if err != nil {
+		log.Printf("[rtc] SetLocalDescription(offer) failed: %v", err)
+		if p.config.OnError != nil {
+			p.config.OnError(fmt.Errorf("failed to set local description: %w", err))
+		}
+		return
+	}
+
+	offerJSON, err := json.Marshal(offer)
+	if err != nil {
+		log.Printf("[rtc] failed to marshal offer: %v", err)
+		return
+	}
+
+	log.Printf("[rtc] offer sent to %s (type: %s)", targetUserID, offer.Type)
+	p.config.WSClient.SendMsg(api.SignalMessage{
+		Type:    "offer",
+		Room:    p.config.RoomName,
+		To:      targetUserID,
+		Payload: offerJSON,
+	})
 }
 
 func (p *Peer) SendMessage(plaintext []byte) error {
@@ -260,7 +323,7 @@ func (p *Peer) SendMessage(plaintext []byte) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.dc == nil || p.dc.ReadyState() != webrtc.DataChannelStateOpen {
-		return fmt.Errorf("data channel not open")
+		return ErrDataChannelClosed
 	}
 	return p.dc.Send(data)
 }

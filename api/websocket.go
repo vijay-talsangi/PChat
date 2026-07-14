@@ -45,7 +45,7 @@ type WSClient struct {
 // Connect establishes a WebSocket connection to the signaling server.
 // The serverURL should be the HTTP base URL (e.g., http://localhost:8080);
 // it will be converted to ws:// or wss:// automatically.
-func Connect(serverURL, token string) (*WSClient, error) {
+func Connect(serverURL, token, roomName string) (*WSClient, error) {
 	// Parse and convert the server URL to a WebSocket URL.
 	parsedURL, err := url.Parse(serverURL)
 	if err != nil {
@@ -60,10 +60,11 @@ func Connect(serverURL, token string) (*WSClient, error) {
 		parsedURL.Scheme = "ws"
 	}
 
-	// Set the WebSocket path and include the JWT as a query parameter.
+	// Set the WebSocket path and include the JWT and room as query parameters.
 	parsedURL.Path = "/ws"
 	q := parsedURL.Query()
 	q.Set("token", token)
+	q.Set("room", roomName)
 	parsedURL.RawQuery = q.Encode()
 
 	// Dial the WebSocket server.
