@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -25,9 +26,23 @@ var enterCmd = &cobra.Command{
 		roomKeyEncoded, ok := cfg.RoomKeys[roomName]
 		if !ok {
 			apiClient := newAPIClient(cfg.JWT)
-			encKey, err := apiClient.GetRoomKey(roomName)
-			if err != nil {
-				return fmt.Errorf("no room key found and failed to fetch one: %w", err)
+			var encKey string
+			var apiErr error
+			for attempt := 0; attempt < 10; attempt++ {
+				encKey, apiErr = apiClient.GetRoomKey(roomName)
+				if apiErr == nil {
+					break
+				}
+				if attempt == 0 {
+					fmt.Print("Waiting for room key from existing member...")
+				}
+				time.Sleep(500 * time.Millisecond)
+			}
+			if apiErr != nil {
+				return fmt.Errorf("no room key found and failed to fetch one: %w", apiErr)
+			}
+			if encKey != "" {
+				fmt.Println(" OK")
 			}
 			privKey, err := pcrypto.DecodeBase64(cfg.X25519PrivateKey)
 			if err != nil {

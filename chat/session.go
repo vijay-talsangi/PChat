@@ -11,6 +11,7 @@ import (
 	"github.com/pion/webrtc/v3"
 
 	"github.com/vijay-talsangi/PChat/api"
+	pcrypto "github.com/vijay-talsangi/PChat/crypto"
 	"github.com/vijay-talsangi/PChat/rtc"
 )
 
@@ -36,20 +37,22 @@ type SessionConfig struct {
 }
 
 type Session struct {
-	cfg      SessionConfig
-	peer     *rtc.Peer
-	wsClient *api.WSClient
-	members  map[string]string
-	mu       sync.RWMutex
-	done     chan struct{}
-	prompt   string
+	cfg              SessionConfig
+	peer             *rtc.Peer
+	wsClient         *api.WSClient
+	members          map[string]string
+	provisionedPeers map[string]bool
+	mu               sync.RWMutex
+	done             chan struct{}
+	prompt           string
 }
 
 func NewSession(cfg SessionConfig) *Session {
 	return &Session{
-		cfg:     cfg,
-		members: make(map[string]string),
-		done:    make(chan struct{}),
+		cfg:              cfg,
+		members:          make(map[string]string),
+		provisionedPeers: make(map[string]bool),
+		done:             make(chan struct{}),
 	}
 }
 
@@ -183,6 +186,43 @@ func (s *Session) loadMemberKeys() {
 		}
 	}
 	s.mu.Unlock()
+	s.provisionRoomKeysForMembers(members)
+}
+
+func (s *Session) provisionRoomKeysForMembers(members []Member) {
+	if len(s.cfg.RoomKey) == 0 {
+		return
+	}
+	for _, m := range members {
+		if m.UserID == s.cfg.UserID {
+			continue
+		}
+		s.mu.RLock()
+		alreadyProvisioned := s.provisionedPeers[m.UserID]
+		s.mu.RUnlock()
+		if alreadyProvisioned {
+			continue
+		}
+		pubKey, err := pcrypto.DecodeBase64(m.PublicKey)
+		if err != nil {
+			log.Printf("[session] invalid public key for %s: %v", m.UserID, err)
+			continue
+		}
+		sealed, err := pcrypto.SealRoomKey(s.cfg.RoomKey, pubKey, nil)
+		if err != nil {
+			log.Printf("[session] failed to seal room key for %s: %v", m.UserID, err)
+			continue
+		}
+		encryptedKey := pcrypto.EncodeBase64(sealed)
+		if err := s.cfg.APIClient.UploadRoomKey(s.cfg.RoomName, m.UserID, encryptedKey); err != nil {
+			log.Printf("[session] failed to upload room key for %s: %v", m.UserID, err)
+			continue
+		}
+		s.mu.Lock()
+		s.provisionedPeers[m.UserID] = true
+		s.mu.Unlock()
+		log.Printf("[session] provisioned room key for %s (%s)", m.Username, m.UserID)
+	}
 }
 
 func (s *Session) showMembers() {

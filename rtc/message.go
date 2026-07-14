@@ -17,14 +17,25 @@ package rtc
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"time"
 
 	pcrypto "github.com/vijay-talsangi/PChat/crypto"
 )
+
+func keyFingerprint(key []byte) string {
+	if len(key) == 0 {
+		return "empty"
+	}
+	h := sha256.Sum256(key)
+	return hex.EncodeToString(h[:8])
+}
 
 // DataMessage is the wire format for chat messages sent over WebRTC data channels.
 type DataMessage struct {
@@ -59,11 +70,17 @@ func EncodeMessage(
 		return nil, fmt.Errorf("failed to generate message nonce: %w", err)
 	}
 
+	// Log room key fingerprint (never the key itself).
+	fp := keyFingerprint(roomKey)
+	log.Printf("[crypto] EncodeMessage: roomKey fingerprint=%s plaintext_len=%d", fp, len(plaintext))
+
 	// Encrypt the plaintext with the shared room key.
 	ciphertext, err := pcrypto.Encrypt(plaintext, roomKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encrypt message: %w", err)
 	}
+
+	log.Printf("[crypto] EncodeMessage: nonce(hex)=%x ciphertext_len=%d", nonce, len(ciphertext))
 
 	// Sign the concatenation of nonce and ciphertext for integrity and authenticity.
 	signedData := make([]byte, 0, len(nonce)+len(ciphertext))
@@ -85,6 +102,7 @@ func EncodeMessage(
 		return nil, fmt.Errorf("failed to marshal message: %w", err)
 	}
 
+	log.Printf("[crypto] EncodeMessage: wire_len=%d", len(data))
 	return data, nil
 }
 
@@ -140,11 +158,19 @@ func DecodeMessage(
 		}
 	}
 
+	// Log room key fingerprint (never the key itself).
+	fp := keyFingerprint(roomKey)
+	log.Printf("[crypto] DecodeMessage: from=%s roomKey fingerprint=%s nonce(hex)=%x ciphertext_len=%d wire_len=%d",
+		msg.SenderID, fp, nonce, len(ciphertext), len(data))
+
 	// Decrypt the message using the room's AES key.
 	plaintext, err = pcrypto.Decrypt(ciphertext, roomKey)
 	if err != nil {
+		log.Printf("[crypto] DecodeMessage: DECRYPT FAILED — roomKey fingerprint=%s ciphertext_len=%d error=%v",
+			fp, len(ciphertext), err)
 		return "", nil, fmt.Errorf("failed to decrypt message: %w", err)
 	}
 
+	log.Printf("[crypto] DecodeMessage: OK from=%s plaintext_len=%d", msg.SenderID, len(plaintext))
 	return msg.SenderUsername, plaintext, nil
 }
