@@ -37,6 +37,14 @@ func keyFingerprint(key []byte) string {
 	return hex.EncodeToString(h[:8])
 }
 
+func keyFullHash(key []byte) string {
+	if len(key) == 0 {
+		return "empty"
+	}
+	h := sha256.Sum256(key)
+	return hex.EncodeToString(h[:])
+}
+
 // DataMessage is the wire format for chat messages sent over WebRTC data channels.
 type DataMessage struct {
 	// SenderID is the unique user ID of the message sender.
@@ -72,7 +80,8 @@ func EncodeMessage(
 
 	// Log room key fingerprint (never the key itself).
 	fp := keyFingerprint(roomKey)
-	log.Printf("[crypto] EncodeMessage: roomKey fingerprint=%s plaintext_len=%d", fp, len(plaintext))
+	fh := keyFullHash(roomKey)
+	log.Printf("[crypto] EncodeMessage: roomKey fingerprint=%s full=%s roomKey_len=%d plaintext_len=%d", fp, fh, len(roomKey), len(plaintext))
 
 	// Encrypt the plaintext with the shared room key.
 	ciphertext, err := pcrypto.Encrypt(plaintext, roomKey)
@@ -160,14 +169,15 @@ func DecodeMessage(
 
 	// Log room key fingerprint (never the key itself).
 	fp := keyFingerprint(roomKey)
-	log.Printf("[crypto] DecodeMessage: from=%s roomKey fingerprint=%s nonce(hex)=%x ciphertext_len=%d wire_len=%d",
-		msg.SenderID, fp, nonce, len(ciphertext), len(data))
+	fh := keyFullHash(roomKey)
+	log.Printf("[crypto] DecodeMessage: from=%s roomKey fingerprint=%s full=%s roomKey_len=%d nonce(hex)=%x ciphertext_len=%d wire_len=%d",
+		msg.SenderID, fp, fh, len(roomKey), nonce, len(ciphertext), len(data))
 
 	// Decrypt the message using the room's AES key.
 	plaintext, err = pcrypto.Decrypt(ciphertext, roomKey)
 	if err != nil {
-		log.Printf("[crypto] DecodeMessage: DECRYPT FAILED — roomKey fingerprint=%s ciphertext_len=%d error=%v",
-			fp, len(ciphertext), err)
+		log.Printf("[crypto] DecodeMessage: DECRYPT FAILED — roomKey fingerprint=%s full=%s ciphertext_len=%d error=%v",
+			fp, fh, len(ciphertext), err)
 		return "", nil, fmt.Errorf("failed to decrypt message: %w", err)
 	}
 

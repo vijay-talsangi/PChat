@@ -135,8 +135,12 @@ func (p *Peer) Start() error {
 	})
 
 	pc.OnDataChannel(func(d *webrtc.DataChannel) {
-		log.Printf("[rtc] remote DataChannel received: %s", d.Label())
-		p.dc = d
+		log.Printf("[rtc] remote DataChannel received: %s (label=%s)", d.Label(), d.Label())
+		p.mu.Lock()
+		if p.dc == nil {
+			p.dc = d
+		}
+		p.mu.Unlock()
 		d.OnOpen(func() {
 			log.Printf("[rtc] remote DataChannel OnOpen: %s", d.Label())
 		})

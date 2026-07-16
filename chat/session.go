@@ -2,6 +2,8 @@ package chat
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
@@ -14,6 +16,14 @@ import (
 	pcrypto "github.com/vijay-talsangi/PChat/crypto"
 	"github.com/vijay-talsangi/PChat/rtc"
 )
+
+func roomKeyFingerprint(key []byte) string {
+	if len(key) == 0 {
+		return "empty"
+	}
+	h := sha256.Sum256(key)
+	return hex.EncodeToString(h[:])
+}
 
 type Member struct {
 	UserID           string
@@ -57,6 +67,8 @@ func NewSession(cfg SessionConfig) *Session {
 }
 
 func (s *Session) Start() error {
+	log.Printf("[session] Starting session: room=%s user=%s roomKey_hash=%s",
+		s.cfg.RoomName, s.cfg.UserID, roomKeyFingerprint(s.cfg.RoomKey))
 	var ics []webrtc.ICEServer
 	turnCreds, turnErr := s.cfg.APIClient.GetTurnCredentials(s.cfg.RoomName)
 	if turnErr == nil && turnCreds != nil {
@@ -221,7 +233,7 @@ func (s *Session) provisionRoomKeysForMembers(members []Member) {
 		s.mu.Lock()
 		s.provisionedPeers[m.UserID] = true
 		s.mu.Unlock()
-		log.Printf("[session] provisioned room key for %s (%s)", m.Username, m.UserID)
+		log.Printf("[session] provisioned room key for %s (%s) key_hash=%s", m.Username, m.UserID, roomKeyFingerprint(s.cfg.RoomKey))
 	}
 }
 
