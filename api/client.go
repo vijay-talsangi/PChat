@@ -98,6 +98,15 @@ type apiError struct {
 	Error string `json:"error"`
 }
 
+type HTTPStatusError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *HTTPStatusError) Error() string {
+	return e.Message
+}
+
 type apiEnvelope struct {
 	Data json.RawMessage `json:"data"`
 }
@@ -164,10 +173,9 @@ func (c *Client) ListRooms() ([]RoomListItem, error) {
 	return resp.Rooms, nil
 }
 
-func (c *Client) JoinRoom(code, encryptedRoomKey string) (*JoinResponse, error) {
+func (c *Client) JoinRoom(code string) (*JoinResponse, error) {
 	body := map[string]string{
-		"code":               code,
-		"encrypted_room_key": encryptedRoomKey,
+		"code": code,
 	}
 	var resp JoinResponse
 	if err := c.post("/api/rooms/join", body, &resp); err != nil {
@@ -177,7 +185,7 @@ func (c *Client) JoinRoom(code, encryptedRoomKey string) (*JoinResponse, error) 
 }
 
 func (c *Client) LeaveRoom(name string) error {
-	return c.postNoBody("/api/rooms/"+url.PathEscape(name)+"/leave")
+	return c.postNoBody("/api/rooms/" + url.PathEscape(name) + "/leave")
 }
 
 func (c *Client) DeleteRoom(name string) error {
@@ -336,11 +344,11 @@ func (c *Client) handleResponse(resp *http.Response, result interface{}) error {
 func (c *Client) parseError(resp *http.Response) error {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("server returned status %d", resp.StatusCode)
+		return &HTTPStatusError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("server returned status %d", resp.StatusCode)}
 	}
 	var apiErr apiError
 	if json.Unmarshal(body, &apiErr) == nil && apiErr.Error != "" {
-		return fmt.Errorf("server error (%d): %s", resp.StatusCode, apiErr.Error)
+		return &HTTPStatusError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("server error (%d): %s", resp.StatusCode, apiErr.Error)}
 	}
-	return fmt.Errorf("server error (%d): %s", resp.StatusCode, string(body))
+	return &HTTPStatusError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("server error (%d): %s", resp.StatusCode, string(body))}
 }

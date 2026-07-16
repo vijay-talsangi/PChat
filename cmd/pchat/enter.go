@@ -1,10 +1,12 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/vijay-talsangi/PChat/api"
 
 	"github.com/vijay-talsangi/PChat/chat"
 	"github.com/vijay-talsangi/PChat/config"
@@ -28,22 +30,19 @@ var enterCmd = &cobra.Command{
 			apiClient := newAPIClient(cfg.JWT)
 			var encKey string
 			var apiErr error
-			for attempt := 0; attempt < 10; attempt++ {
+			fmt.Print("Waiting for room key from existing member...")
+			for {
 				encKey, apiErr = apiClient.GetRoomKey(roomName)
 				if apiErr == nil {
 					break
 				}
-				if attempt == 0 {
-					fmt.Print("Waiting for room key from existing member...")
+				var statusErr *api.HTTPStatusError
+				if !errors.As(apiErr, &statusErr) || statusErr.StatusCode != 404 {
+					return fmt.Errorf("failed to fetch room key: %w", apiErr)
 				}
 				time.Sleep(500 * time.Millisecond)
 			}
-			if apiErr != nil {
-				return fmt.Errorf("no room key found and failed to fetch one: %w", apiErr)
-			}
-			if encKey != "" {
-				fmt.Println(" OK")
-			}
+			fmt.Println(" OK")
 			privKey, err := pcrypto.DecodeBase64(cfg.X25519PrivateKey)
 			if err != nil {
 				return fmt.Errorf("failed to decode private key: %w", err)

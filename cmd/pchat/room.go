@@ -81,7 +81,7 @@ var roomJoinCmd = &cobra.Command{
 			return fmt.Errorf("not logged in")
 		}
 		apiClient := newAPIClient(cfg.JWT)
-		resp, err := apiClient.JoinRoom(code, "")
+		resp, err := apiClient.JoinRoom(code)
 		if err != nil {
 			return fmt.Errorf("failed to join room: %w", err)
 		}

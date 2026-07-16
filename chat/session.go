@@ -198,14 +198,19 @@ func (s *Session) loadMemberKeys() {
 		}
 	}
 	s.mu.Unlock()
-	s.provisionRoomKeysForMembers(members)
+	s.provisionRoomKeysForMissingMembers()
 }
 
-func (s *Session) provisionRoomKeysForMembers(members []Member) {
+func (s *Session) provisionRoomKeysForMissingMembers() {
 	if len(s.cfg.RoomKey) == 0 {
 		return
 	}
-	for _, m := range members {
+	missingMembers, err := s.cfg.APIClient.GetMembersWithoutKeys(s.cfg.RoomName)
+	if err != nil {
+		log.Printf("[session] failed to fetch members without keys: %v", err)
+		return
+	}
+	for _, m := range missingMembers {
 		if m.UserID == s.cfg.UserID {
 			continue
 		}
