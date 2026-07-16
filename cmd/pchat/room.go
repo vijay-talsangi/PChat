@@ -28,8 +28,6 @@ var roomCreateCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to generate room key: %w", err)
 		}
-		cfg.RoomKeys[name] = pcrypto.EncodeBase64(roomKey)
-		config.Save(cfg)
 		selfEncodedKey, err := sealRoomKeyToSelf(roomKey)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt room key for self: %w", err)
@@ -39,6 +37,8 @@ var roomCreateCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to create room: %w", err)
 		}
+		cfg.RoomKeys[name] = pcrypto.EncodeBase64(roomKey)
+		config.Save(cfg)
 		fmt.Printf("Room created: %s (id: %s)\n", room.Name, room.ID)
 		return nil
 	},
