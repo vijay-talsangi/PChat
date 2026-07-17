@@ -10,10 +10,11 @@ import (
 )
 
 var (
-	cfg     *config.ConfigData
-	version = "dev"
-	commit  = "unknown"
-	date    = "unknown"
+	cfg       *config.ConfigData
+	version   = "dev"
+	commit    = "unknown"
+	date      = "unknown"
+	debugMode bool
 )
 
 var rootCmd = &cobra.Command{
@@ -28,6 +29,9 @@ Messages are encrypted with AES-256-GCM and never stored server-side.`,
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
 		}
+		if os.Getenv("PCHAT_DEBUG") != "" {
+			debugMode = true
+		}
 		return nil
 	},
 }
@@ -40,6 +44,7 @@ func Execute() {
 }
 
 func init() {
+	rootCmd.PersistentFlags().BoolVarP(&debugMode, "debug", "d", false, "Show debug logs")
 	rootCmd.AddCommand(registerCmd)
 	rootCmd.AddCommand(loginCmd)
 	rootCmd.AddCommand(logoutCmd)

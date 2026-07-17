@@ -68,9 +68,6 @@ var enterCmd = &cobra.Command{
 			return fmt.Errorf("failed to decode signing key: %w", err)
 		}
 
-		chat.PrintBanner(roomName)
-		chat.PrintHelp()
-
 		apiClient := newAPIClient(cfg.JWT)
 
 		session := chat.NewSession(chat.SessionConfig{
@@ -83,6 +80,7 @@ var enterCmd = &cobra.Command{
 			SigningKey:  signingKey,
 			APIClient:   apiClient,
 			MembersFunc: fetchMembers,
+			Debug:       debugMode,
 		})
 
 		return session.Start()

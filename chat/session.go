@@ -2,28 +2,20 @@ package chat
 
 import (
 	"bufio"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
+	"io"
 	"log"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/pion/webrtc/v3"
-
 	"github.com/vijay-talsangi/PChat/api"
 	pcrypto "github.com/vijay-talsangi/PChat/crypto"
 	"github.com/vijay-talsangi/PChat/rtc"
 )
-
-func roomKeyFingerprint(key []byte) string {
-	if len(key) == 0 {
-		return "empty"
-	}
-	h := sha256.Sum256(key)
-	return hex.EncodeToString(h[:])
-}
 
 type Member struct {
 	UserID           string
@@ -44,6 +36,7 @@ type SessionConfig struct {
 	SigningKey  []byte
 	APIClient   *api.Client
 	MembersFunc MembersFunc
+	Debug       bool
 }
 
 type Session struct {
@@ -53,8 +46,8 @@ type Session struct {
 	members          map[string]string
 	provisionedPeers map[string]bool
 	mu               sync.RWMutex
+	outputMu         sync.Mutex
 	done             chan struct{}
-	prompt           string
 }
 
 func NewSession(cfg SessionConfig) *Session {
@@ -66,15 +59,36 @@ func NewSession(cfg SessionConfig) *Session {
 	}
 }
 
+func (s *Session) prompt() string {
+	return fmt.Sprintf("%s ❯ ", s.cfg.RoomName)
+}
+
+func (s *Session) safePrint(fn func()) {
+	s.outputMu.Lock()
+	defer s.outputMu.Unlock()
+	ClearLine()
+	fn()
+	fmt.Print(s.prompt())
+}
+
+func (s *Session) cleanup() {
+	if s.peer != nil {
+		s.peer.Close()
+	}
+	fmt.Println()
+}
+
 func (s *Session) Start() error {
-	log.Printf("[session] Starting session: room=%s user=%s roomKey_hash=%s",
-		s.cfg.RoomName, s.cfg.UserID, roomKeyFingerprint(s.cfg.RoomKey))
+	if !s.cfg.Debug {
+		log.SetOutput(io.Discard)
+	}
+
+	PrintHeader(s.cfg.RoomName, s.cfg.Username)
+
 	var ics []webrtc.ICEServer
 	turnCreds, turnErr := s.cfg.APIClient.GetTurnCredentials(s.cfg.RoomName)
 	if turnErr == nil && turnCreds != nil {
 		ics = rtc.BuildICEServers(turnCreds)
-	} else if turnErr != nil {
-		log.Printf("[session] TURN credentials unavailable (non-fatal): %v", turnErr)
 	}
 
 	wsClient, err := api.Connect(s.cfg.ServerURL, s.cfg.Token, s.cfg.RoomName)
@@ -99,9 +113,9 @@ func (s *Session) Start() error {
 			username := s.members[userID]
 			s.mu.RUnlock()
 			if username != "" && username != s.cfg.Username {
-				ClearLine()
-				PrintSystem(fmt.Sprintf("Peer joined: %s", username))
-				fmt.Print(s.prompt)
+				s.safePrint(func() {
+					PrintSystem(fmt.Sprintf("%s joined", username))
+				})
 			}
 		},
 		OnPeerLeft: func(userID string) {
@@ -110,15 +124,37 @@ func (s *Session) Start() error {
 			delete(s.members, userID)
 			s.mu.Unlock()
 			if username != "" {
-				ClearLine()
-				PrintSystem(fmt.Sprintf("Peer left: %s", username))
-				fmt.Print(s.prompt)
+				s.safePrint(func() {
+					PrintSystem(fmt.Sprintf("%s left", username))
+				})
 			}
 		},
 		OnError: func(err error) {
-			ClearLine()
-			PrintError(fmt.Sprintf("RTC error: %v", err))
-			fmt.Print(s.prompt)
+			if s.cfg.Debug {
+				s.safePrint(func() {
+					PrintError(fmt.Sprintf("%v", err))
+				})
+			}
+		},
+		OnConnectionStateChange: func(state rtc.ConnectionState) {
+			switch state {
+			case rtc.ConnectionStateConnected:
+				s.safePrint(func() {
+					PrintConnected()
+				})
+			case rtc.ConnectionStateConnecting:
+				s.safePrint(func() {
+					PrintConnecting()
+				})
+			case rtc.ConnectionStateDisconnected:
+				s.safePrint(func() {
+					PrintWarning("Connection lost")
+				})
+			case rtc.ConnectionStateFailed:
+				s.safePrint(func() {
+					PrintDisconnected()
+				})
+			}
 		},
 	})
 
@@ -131,47 +167,80 @@ func (s *Session) Start() error {
 	s.loadMemberKeys()
 
 	scanner := bufio.NewScanner(os.Stdin)
-	s.prompt = fmt.Sprintf("%s> ", s.cfg.RoomName)
-	fmt.Print(s.prompt)
+	fmt.Print(s.prompt())
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT)
+	go func() {
+		<-sigCh
+		s.outputMu.Lock()
+		ClearLine()
+		s.outputMu.Unlock()
+		s.cleanup()
+		fmt.Println("Bye!")
+		os.Exit(0)
+	}()
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
-			fmt.Print(s.prompt)
+			fmt.Print(s.prompt())
 			continue
 		}
 
 		switch {
 		case line == "/exit":
-			PrintSystem("Leaving room...")
-			peer.Close()
+			s.cleanup()
+			fmt.Println("Bye!")
 			return nil
 
 		case line == "/help":
-			PrintHelp()
-			fmt.Print(s.prompt)
+			s.safePrint(func() {
+				PrintHelp()
+			})
 			continue
 
 		case line == "/members":
-			s.showMembers()
-			fmt.Print(s.prompt)
+			s.safePrint(func() {
+				s.showMembers()
+			})
+			continue
+
+		case line == "/clear":
+			s.outputMu.Lock()
+			fmt.Print("\033[2J\033[H")
+			PrintHeader(s.cfg.RoomName, s.cfg.Username)
+			fmt.Print(s.prompt())
+			s.outputMu.Unlock()
+			continue
+
+		case strings.HasPrefix(line, "/invite"):
+			s.safePrint(func() {
+				inv, err := s.cfg.APIClient.CreateInvite(s.cfg.RoomName, 1, 24)
+				if err != nil {
+					PrintError("Failed to create invite")
+					return
+				}
+				fmt.Printf("Invite code: %s\n", inv.Code)
+			})
 			continue
 
 		case strings.HasPrefix(line, "/"):
-			ClearLine()
-			PrintError(fmt.Sprintf("Unknown command: %s", line))
-			fmt.Print(s.prompt)
+			s.safePrint(func() {
+				PrintError(fmt.Sprintf("Unknown command: %s", line))
+			})
 			continue
 
 		default:
 			if err := peer.SendMessage([]byte(line)); err != nil {
-				ClearLine()
-				PrintError(fmt.Sprintf("Failed to send: %v", err))
+				s.safePrint(func() {
+					PrintError("Failed to send message")
+				})
 			} else {
-				ClearLine()
-				PrintOwnMessage(line)
+				s.safePrint(func() {
+					PrintOwnMessage(line)
+				})
 			}
-			fmt.Print(s.prompt)
 		}
 	}
 
@@ -179,9 +248,9 @@ func (s *Session) Start() error {
 }
 
 func (s *Session) onMessage(senderUsername string, plaintext []byte) {
-	ClearLine()
-	PrintMessage(senderUsername, string(plaintext))
-	fmt.Print(s.prompt)
+	s.safePrint(func() {
+		PrintMessage(senderUsername, string(plaintext))
+	})
 }
 
 func (s *Session) loadMemberKeys() {
@@ -207,7 +276,6 @@ func (s *Session) provisionRoomKeysForMissingMembers() {
 	}
 	missingMembers, err := s.cfg.APIClient.GetMembersWithoutKeys(s.cfg.RoomName)
 	if err != nil {
-		log.Printf("[session] failed to fetch members without keys: %v", err)
 		return
 	}
 	for _, m := range missingMembers {
@@ -222,23 +290,19 @@ func (s *Session) provisionRoomKeysForMissingMembers() {
 		}
 		pubKey, err := pcrypto.DecodeBase64(m.PublicKey)
 		if err != nil {
-			log.Printf("[session] invalid public key for %s: %v", m.UserID, err)
 			continue
 		}
 		sealed, err := pcrypto.SealRoomKey(s.cfg.RoomKey, pubKey, nil)
 		if err != nil {
-			log.Printf("[session] failed to seal room key for %s: %v", m.UserID, err)
 			continue
 		}
 		encryptedKey := pcrypto.EncodeBase64(sealed)
 		if err := s.cfg.APIClient.UploadRoomKey(s.cfg.RoomName, m.UserID, encryptedKey); err != nil {
-			log.Printf("[session] failed to upload room key for %s: %v", m.UserID, err)
 			continue
 		}
 		s.mu.Lock()
 		s.provisionedPeers[m.UserID] = true
 		s.mu.Unlock()
-		log.Printf("[session] provisioned room key for %s (%s) key_hash=%s", m.Username, m.UserID, roomKeyFingerprint(s.cfg.RoomKey))
 	}
 }
 

@@ -13,6 +13,15 @@ import (
 	pcrypto "github.com/vijay-talsangi/PChat/crypto"
 )
 
+type ConnectionState int
+
+const (
+	ConnectionStateDisconnected ConnectionState = iota
+	ConnectionStateConnecting
+	ConnectionStateConnected
+	ConnectionStateFailed
+)
+
 var (
 	ErrNoPeerConnection  = fmt.Errorf("peer connection not initialized")
 	ErrDataChannelClosed = fmt.Errorf("data channel not open")
@@ -26,10 +35,11 @@ type PeerConfig struct {
 	SigningKey   []byte
 	ICEServers   []webrtc.ICEServer
 	WSClient     *api.WSClient
-	OnMessage    func(senderUsername string, plaintext []byte)
-	OnPeerJoined func(userID string)
-	OnPeerLeft   func(userID string)
-	OnError      func(err error)
+	OnMessage              func(senderUsername string, plaintext []byte)
+	OnPeerJoined           func(userID string)
+	OnPeerLeft             func(userID string)
+	OnError                func(err error)
+	OnConnectionStateChange func(state ConnectionState)
 }
 
 type Peer struct {
@@ -79,6 +89,9 @@ func (p *Peer) Start() error {
 			p.mu.Lock()
 			p.connected = true
 			p.mu.Unlock()
+			if p.config.OnConnectionStateChange != nil {
+				p.config.OnConnectionStateChange(ConnectionStateConnected)
+			}
 		case webrtc.ICEConnectionStateDisconnected:
 			fallthrough
 		case webrtc.ICEConnectionStateFailed:
@@ -86,6 +99,17 @@ func (p *Peer) Start() error {
 			p.mu.Lock()
 			p.connected = false
 			p.mu.Unlock()
+			if p.config.OnConnectionStateChange != nil {
+				cs := ConnectionStateDisconnected
+				if state == webrtc.ICEConnectionStateFailed {
+					cs = ConnectionStateFailed
+				}
+				p.config.OnConnectionStateChange(cs)
+			}
+		case webrtc.ICEConnectionStateChecking:
+			if p.config.OnConnectionStateChange != nil {
+				p.config.OnConnectionStateChange(ConnectionStateConnecting)
+			}
 		}
 	})
 
