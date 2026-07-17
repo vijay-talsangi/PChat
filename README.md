@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.png" alt="PChat Banner" width="100%">
+</p>
+
 # PChat — P2P Encrypted Terminal Chat
 
 [![Go](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go)](https://go.dev)
