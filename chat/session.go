@@ -1,16 +1,16 @@
 package chat
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"log"
-	"os"
-	"os/signal"
 	"strings"
 	"sync"
-	"syscall"
 
+	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/pion/webrtc/v3"
 	"github.com/vijay-talsangi/PChat/api"
 	pcrypto "github.com/vijay-talsangi/PChat/crypto"
@@ -46,7 +46,7 @@ type Session struct {
 	members          map[string]string
 	provisionedPeers map[string]bool
 	mu               sync.RWMutex
-	outputMu         sync.Mutex
+	program          *tea.Program
 	done             chan struct{}
 }
 
@@ -59,31 +59,186 @@ func NewSession(cfg SessionConfig) *Session {
 	}
 }
 
-func (s *Session) prompt() string {
-	return fmt.Sprintf("%s ❯ ", s.cfg.RoomName)
-}
-
-func (s *Session) safePrint(fn func()) {
-	s.outputMu.Lock()
-	defer s.outputMu.Unlock()
-	ClearLine()
-	fn()
-	fmt.Print(s.prompt())
-}
-
 func (s *Session) cleanup() {
 	if s.peer != nil {
 		s.peer.Close()
 	}
-	fmt.Println()
+}
+
+type incomingMsg struct {
+	username string
+	text     string
+}
+
+type systemMsg struct {
+	text string
+}
+
+type connStateMsg struct {
+	state string
+	text  string
+}
+
+type inviteResultMsg struct {
+	code string
+	err  error
+}
+
+type model struct {
+	session    *Session
+	viewport   viewport.Model
+	textInput  textinput.Model
+	messages   []string
+	width      int
+	height     int
+	ready      bool
+	connStatus string
+}
+
+func (m *model) Init() tea.Cmd {
+	return textinput.Blink
+}
+
+func (m *model) addMessage(text string) {
+	m.messages = append(m.messages, text)
+	m.viewport.SetContent(strings.Join(m.messages, "\n"))
+	m.viewport.GotoBottom()
+}
+
+func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		headerHeight := 8
+		verticalMargin := headerHeight + 1
+		if !m.ready {
+			m.viewport = viewport.New(msg.Width, msg.Height-verticalMargin)
+			m.viewport.YPosition = headerHeight
+			m.ready = true
+		} else {
+			m.viewport.Width = msg.Width
+			m.viewport.Height = msg.Height - verticalMargin
+		}
+		m.textInput.Width = msg.Width - 2
+		if len(m.messages) > 0 {
+			m.viewport.SetContent(strings.Join(m.messages, "\n"))
+		}
+		return m, nil
+
+	case incomingMsg:
+		m.addMessage(StylePeerMessage(msg.username, msg.text))
+		return m, nil
+
+	case systemMsg:
+		m.addMessage(StyleSystemMessage(msg.text))
+		return m, nil
+
+	case connStateMsg:
+		m.connStatus = msg.state
+		if msg.text != "" {
+			m.addMessage(StyleSystemMessage(msg.text))
+		}
+		return m, nil
+
+	case inviteResultMsg:
+		if msg.err != nil {
+			m.addMessage(StyleErrorMessage("Failed to create invite"))
+		} else {
+			m.addMessage(StyleSystemMessage(fmt.Sprintf("Invite code: %s", msg.code)))
+		}
+		return m, nil
+
+	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyCtrlC:
+			m.session.cleanup()
+			return m, tea.Quit
+
+		case tea.KeyEnter:
+			val := strings.TrimSpace(m.textInput.Value())
+			m.textInput.Reset()
+			if val == "" {
+				return m, nil
+			}
+			switch {
+			case val == "/exit":
+				m.session.cleanup()
+				return m, tea.Quit
+
+			case val == "/help":
+				m.addMessage(StyleHelp())
+				return m, nil
+
+			case val == "/members":
+				m.addMessage(m.session.formatMembers())
+				return m, nil
+
+			case val == "/clear":
+				m.messages = nil
+				m.viewport.SetContent("")
+				return m, nil
+
+			case strings.HasPrefix(val, "/invite"):
+				go func() {
+					inv, err := m.session.cfg.APIClient.CreateInvite(m.session.cfg.RoomName, 1, 24)
+					if err != nil {
+						m.session.program.Send(inviteResultMsg{err: err})
+						return
+					}
+					m.session.program.Send(inviteResultMsg{code: inv.Code})
+				}()
+				return m, nil
+
+			case strings.HasPrefix(val, "/"):
+				m.addMessage(StyleErrorMessage(fmt.Sprintf("Unknown command: %s", val)))
+				return m, nil
+
+			default:
+				if err := m.session.peer.SendMessage([]byte(val)); err != nil {
+					m.addMessage(StyleErrorMessage("Failed to send message"))
+				} else {
+					m.addMessage(StyleOwnMessage(val))
+				}
+				return m, nil
+			}
+		}
+
+		var cmd tea.Cmd
+		m.textInput, cmd = m.textInput.Update(msg)
+		return m, cmd
+
+	default:
+		return m, nil
+	}
+}
+
+func (m *model) View() string {
+	if !m.ready {
+		return "\n  Initializing..."
+	}
+	header := RenderHeader(m.session.cfg.RoomName, m.session.cfg.Username, m.connStatus)
+	inputPrompt := lipgloss.NewStyle().Foreground(lipgloss.Color("#8B8B8B")).Render("❯ ")
+	m.textInput.Prompt = inputPrompt
+	return fmt.Sprintf("%s\n%s\n%s", header, m.viewport.View(), m.textInput.View())
+}
+
+func (s *Session) formatMembers() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	usernames := make([]string, 0, len(s.members))
+	for _, username := range s.members {
+		if username != s.cfg.Username {
+			usernames = append(usernames, username)
+		}
+	}
+	return StyleMembers(usernames)
 }
 
 func (s *Session) Start() error {
 	if !s.cfg.Debug {
 		log.SetOutput(io.Discard)
 	}
-
-	PrintHeader(s.cfg.RoomName, s.cfg.Username)
 
 	var ics []webrtc.ICEServer
 	turnCreds, turnErr := s.cfg.APIClient.GetTurnCredentials(s.cfg.RoomName)
@@ -98,6 +253,27 @@ func (s *Session) Start() error {
 	s.wsClient = wsClient
 	defer wsClient.Close()
 
+	ti := textinput.New()
+	ti.Placeholder = "Type a message..."
+	ti.Focus()
+	ti.CharLimit = 0
+
+	m := &model{
+		session:    s,
+		textInput:  ti,
+		connStatus: "🟡 Connecting...",
+		messages:   make([]string, 0, 64),
+	}
+
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	s.program = p
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := p.Run()
+		errCh <- err
+	}()
+
 	peer := rtc.NewPeer(rtc.PeerConfig{
 		UserID:     s.cfg.UserID,
 		Username:   s.cfg.Username,
@@ -106,16 +282,16 @@ func (s *Session) Start() error {
 		SigningKey: s.cfg.SigningKey,
 		ICEServers: ics,
 		WSClient:   wsClient,
-		OnMessage:  s.onMessage,
+		OnMessage: func(senderUsername string, plaintext []byte) {
+			s.program.Send(incomingMsg{username: senderUsername, text: string(plaintext)})
+		},
 		OnPeerJoined: func(userID string) {
 			s.loadMemberKeys()
 			s.mu.RLock()
 			username := s.members[userID]
 			s.mu.RUnlock()
 			if username != "" && username != s.cfg.Username {
-				s.safePrint(func() {
-					PrintSystem(fmt.Sprintf("%s joined", username))
-				})
+				s.program.Send(systemMsg{text: fmt.Sprintf("%s joined the room", username)})
 			}
 		},
 		OnPeerLeft: func(userID string) {
@@ -124,133 +300,37 @@ func (s *Session) Start() error {
 			delete(s.members, userID)
 			s.mu.Unlock()
 			if username != "" {
-				s.safePrint(func() {
-					PrintSystem(fmt.Sprintf("%s left", username))
-				})
+				s.program.Send(systemMsg{text: fmt.Sprintf("%s left the room", username)})
 			}
 		},
 		OnError: func(err error) {
 			if s.cfg.Debug {
-				s.safePrint(func() {
-					PrintError(fmt.Sprintf("%v", err))
-				})
+				s.program.Send(systemMsg{text: fmt.Sprintf("Error: %v", err)})
 			}
 		},
 		OnConnectionStateChange: func(state rtc.ConnectionState) {
 			switch state {
 			case rtc.ConnectionStateConnected:
-				s.safePrint(func() {
-					PrintConnected()
-				})
+				s.program.Send(connStateMsg{state: "🟢 Connected", text: "🟢 Connected to room"})
 			case rtc.ConnectionStateConnecting:
-				s.safePrint(func() {
-					PrintConnecting()
-				})
+				s.program.Send(connStateMsg{state: "🟡 Connecting...", text: ""})
 			case rtc.ConnectionStateDisconnected:
-				s.safePrint(func() {
-					PrintWarning("Connection lost")
-				})
+				s.program.Send(connStateMsg{state: "🔴 Disconnected", text: "⚠ Connection lost"})
 			case rtc.ConnectionStateFailed:
-				s.safePrint(func() {
-					PrintDisconnected()
-				})
+				s.program.Send(connStateMsg{state: "🔴 Failed", text: "🔴 Disconnected"})
 			}
 		},
 	})
 
 	s.peer = peer
-
 	if err := peer.Start(); err != nil {
+		p.Quit()
 		return fmt.Errorf("failed to start peer connection: %w", err)
 	}
 
 	s.loadMemberKeys()
 
-	scanner := bufio.NewScanner(os.Stdin)
-	fmt.Print(s.prompt())
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT)
-	go func() {
-		<-sigCh
-		s.outputMu.Lock()
-		ClearLine()
-		s.outputMu.Unlock()
-		s.cleanup()
-		fmt.Println("Bye!")
-		os.Exit(0)
-	}()
-
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			fmt.Print(s.prompt())
-			continue
-		}
-
-		switch {
-		case line == "/exit":
-			s.cleanup()
-			fmt.Println("Bye!")
-			return nil
-
-		case line == "/help":
-			s.safePrint(func() {
-				PrintHelp()
-			})
-			continue
-
-		case line == "/members":
-			s.safePrint(func() {
-				s.showMembers()
-			})
-			continue
-
-		case line == "/clear":
-			s.outputMu.Lock()
-			fmt.Print("\033[2J\033[H")
-			PrintHeader(s.cfg.RoomName, s.cfg.Username)
-			fmt.Print(s.prompt())
-			s.outputMu.Unlock()
-			continue
-
-		case strings.HasPrefix(line, "/invite"):
-			s.safePrint(func() {
-				inv, err := s.cfg.APIClient.CreateInvite(s.cfg.RoomName, 1, 24)
-				if err != nil {
-					PrintError("Failed to create invite")
-					return
-				}
-				fmt.Printf("Invite code: %s\n", inv.Code)
-			})
-			continue
-
-		case strings.HasPrefix(line, "/"):
-			s.safePrint(func() {
-				PrintError(fmt.Sprintf("Unknown command: %s", line))
-			})
-			continue
-
-		default:
-			if err := peer.SendMessage([]byte(line)); err != nil {
-				s.safePrint(func() {
-					PrintError("Failed to send message")
-				})
-			} else {
-				s.safePrint(func() {
-					PrintOwnMessage(line)
-				})
-			}
-		}
-	}
-
-	return scanner.Err()
-}
-
-func (s *Session) onMessage(senderUsername string, plaintext []byte) {
-	s.safePrint(func() {
-		PrintMessage(senderUsername, string(plaintext))
-	})
+	return <-errCh
 }
 
 func (s *Session) loadMemberKeys() {
@@ -304,16 +384,4 @@ func (s *Session) provisionRoomKeysForMissingMembers() {
 		s.provisionedPeers[m.UserID] = true
 		s.mu.Unlock()
 	}
-}
-
-func (s *Session) showMembers() {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	usernames := make([]string, 0, len(s.members))
-	for _, username := range s.members {
-		if username != s.cfg.Username {
-			usernames = append(usernames, username)
-		}
-	}
-	PrintMembers(usernames)
 }

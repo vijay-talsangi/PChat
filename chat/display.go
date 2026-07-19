@@ -2,22 +2,34 @@ package chat
 
 import (
 	"fmt"
+	"hash/fnv"
 	"strings"
-)
 
-const (
-	Reset  = "\033[0m"
-	Bold   = "\033[1m"
-	Dim    = "\033[2m"
-	Red    = "\033[31m"
-	Green  = "\033[32m"
-	Yellow = "\033[33m"
-	Blue   = "\033[34m"
-	Cyan   = "\033[36m"
-	White  = "\033[37m"
+	"github.com/charmbracelet/lipgloss"
 )
 
 const headerWidth = 44
+
+var userColorPalette = []lipgloss.Color{
+	lipgloss.Color("#FF6B6B"),
+	lipgloss.Color("#51CF66"),
+	lipgloss.Color("#FFD43B"),
+	lipgloss.Color("#4DABF7"),
+	lipgloss.Color("#DA77F2"),
+	lipgloss.Color("#FF922B"),
+	lipgloss.Color("#F783AC"),
+	lipgloss.Color("#748FFC"),
+	lipgloss.Color("#69DB7C"),
+	lipgloss.Color("#FCC419"),
+	lipgloss.Color("#22B8CF"),
+	lipgloss.Color("#FF8787"),
+}
+
+func hashColor(s string) lipgloss.Color {
+	h := fnv.New32a()
+	h.Write([]byte(s))
+	return userColorPalette[h.Sum32()%uint32(len(userColorPalette))]
+}
 
 func pad(s string, w int) string {
 	if len(s) >= w {
@@ -26,85 +38,86 @@ func pad(s string, w int) string {
 	return s + strings.Repeat(" ", w-len(s))
 }
 
-func PrintHeader(roomName, username string) {
+func RenderHeader(roomName, username, status string) string {
 	inner := headerWidth - 4
-	fmt.Println()
-	fmt.Printf("╔%s╗\n", strings.Repeat("═", headerWidth-2))
-	fmt.Printf("║ %s║\n", pad("  🔒 PChat", inner))
-	fmt.Printf("║ %s║\n", pad(fmt.Sprintf("  Room: %s", roomName), inner))
-	fmt.Printf("║ %s║\n", pad(fmt.Sprintf("  User: %s", username), inner))
-	fmt.Printf("║ %s║\n", pad("  Status: 🟢 Connected", inner))
-	fmt.Printf("╚%s╝\n", strings.Repeat("═", headerWidth-2))
-	fmt.Println()
+	var b strings.Builder
+	b.WriteString("\n")
+	b.WriteString(fmt.Sprintf("╔%s╗\n", strings.Repeat("═", headerWidth-2)))
+	b.WriteString(fmt.Sprintf("║ %s║\n", pad("  🔒 PChat", inner)))
+	b.WriteString(fmt.Sprintf("║ %s║\n", pad(fmt.Sprintf("  Room: %s", roomName), inner)))
+	b.WriteString(fmt.Sprintf("║ %s║\n", pad(fmt.Sprintf("  User: %s", username), inner)))
+	b.WriteString(fmt.Sprintf("║ %s║\n", pad(fmt.Sprintf("  Status: %s", status), inner)))
+	b.WriteString(fmt.Sprintf("╚%s╝\n", strings.Repeat("═", headerWidth-2)))
+	return b.String()
 }
 
-func PrintMessage(username, msg string) {
-	fmt.Printf("%s[%s]%s %s\n", Bold, username, Reset, msg)
+func StylePeerMessage(username, text string) string {
+	color := hashColor(username)
+	name := lipgloss.NewStyle().Bold(true).Foreground(color).Render("[" + username + "]")
+	return name + " " + text
 }
 
-func PrintOwnMessage(msg string) {
-	fmt.Printf("%sYou >%s %s\n", Bold, Reset, msg)
+func StyleOwnMessage(text string) string {
+	prefix := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#20C997")).Render("You >")
+	return prefix + " " + text
 }
 
-func PrintSystem(msg string) {
-	fmt.Printf("✓ %s\n", msg)
+func StyleSystemMessage(text string) string {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("#8B8B8B")).Render("✓ " + text)
 }
 
-func PrintWarning(msg string) {
-	fmt.Printf("⚠ %s\n", msg)
+func StyleWarningMessage(text string) string {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD43B")).Render("⚠ " + text)
 }
 
-func PrintConnected() {
-	fmt.Println("🟢 Connected")
+func StyleErrorMessage(text string) string {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6B6B")).Render("✗ " + text)
 }
 
-func PrintConnecting() {
-	fmt.Println("🟡 Connecting...")
+func StyleHelp() string {
+	var b strings.Builder
+	b.WriteString("\n")
+	cmdStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#4DABF7"))
+	descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#CED4DA"))
+	b.WriteString(cmdStyle.Render("Commands") + "\n")
+	b.WriteString(fmt.Sprintf("  %-12s %s\n", cmdStyle.Render("/help"), descStyle.Render("Show help")))
+	b.WriteString(fmt.Sprintf("  %-12s %s\n", cmdStyle.Render("/members"), descStyle.Render("Show online users")))
+	b.WriteString(fmt.Sprintf("  %-12s %s\n", cmdStyle.Render("/invite"), descStyle.Render("Invite a user")))
+	b.WriteString(fmt.Sprintf("  %-12s %s\n", cmdStyle.Render("/clear"), descStyle.Render("Clear chat")))
+	b.WriteString(fmt.Sprintf("  %-12s %s\n", cmdStyle.Render("/exit"), descStyle.Render("Leave room")))
+	return b.String()
 }
 
-func PrintDisconnected() {
-	fmt.Println("🔴 Disconnected")
-}
-
-func PrintReconnecting() {
-	fmt.Println("⟳ Reconnecting...")
-}
-
-func PrintError(msg string) {
-	fmt.Printf("❌ %s\n", msg)
-}
-
-func PrintHelp() {
-	fmt.Println()
-	fmt.Printf("%sCommands%s\n", Bold, Reset)
-	fmt.Printf("  %-10s %s\n", "/help", "Show help")
-	fmt.Printf("  %-10s %s\n", "/members", "Show online users")
-	fmt.Printf("  %-10s %s\n", "/invite", "Invite a user")
-	fmt.Printf("  %-10s %s\n", "/clear", "Clear chat")
-	fmt.Printf("  %-10s %s\n", "/exit", "Leave room")
-	fmt.Println()
-}
-
-func PrintMembers(members []string) {
-	fmt.Println()
-	fmt.Println("╔══════════════════════════╗")
-	fmt.Printf("║ %s%-20s%s║\n", Bold, "Online Users", Reset)
-	fmt.Println("╠══════════════════════════╣")
+func StyleMembers(members []string) string {
+	var b strings.Builder
+	b.WriteString("\n")
+	b.WriteString("╔══════════════════════════╗\n")
+	title := lipgloss.NewStyle().Bold(true).Render("Online Users")
+	b.WriteString(fmt.Sprintf("║ %-22s║\n", title))
+	b.WriteString("╠══════════════════════════╣\n")
 	if len(members) == 0 {
-		fmt.Printf("║  %-20s║\n", "No other users")
+		b.WriteString(fmt.Sprintf("║  %-20s║\n", "No other users"))
 	} else {
 		for _, m := range members {
 			n := m
 			if len(n) > 20 {
 				n = n[:20]
 			}
-			fmt.Printf("║  🟢 %-17s║\n", n)
+			b.WriteString(fmt.Sprintf("║  🟢 %-17s║\n", n))
 		}
 	}
-	fmt.Println("╚══════════════════════════╝")
-	fmt.Println()
+	b.WriteString("╚══════════════════════════╝\n")
+	return b.String()
 }
 
-func ClearLine() {
-	fmt.Print("\r\033[K")
+func StyleConnected() string {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("#51CF66")).Render("🟢 Connected")
+}
+
+func StyleConnecting() string {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD43B")).Render("🟡 Connecting...")
+}
+
+func StyleDisconnected() string {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6B6B")).Render("🔴 Disconnected")
 }
