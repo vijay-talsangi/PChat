@@ -128,58 +128,9 @@ pchat enter "Room Name"                 Enter interactive chat session
 </p>
 
 ### Sequence Diagram
-```mermaid
-sequenceDiagram
-
-participant A as Client A
-participant S as Signaling Server
-participant DB as PostgreSQL
-participant T as TURN Server
-participant B as Client B
-
-A->>S: Login (JWT)
-S->>DB: Validate User
-DB-->>S: OK
-S-->>A: JWT Token
-
-A->>S: Create Room
-S->>DB: Store Room
-DB-->>S: Success
-
-A->>S: Generate Invite
-S-->>A: Invite Token
-
-A->>B: Share Invite Token
-
-B->>S: Redeem Invite
-S->>DB: Validate Invite
-DB-->>S: OK
-S-->>B: Room Access
-
-A->>S: Start Signaling
-B->>S: Join Signaling
-
-S->>A: SDP Offer
-S->>B: SDP Offer
-
-A->>S: ICE Candidates
-B->>S: ICE Candidates
-
-S->>T: Request TURN Credentials
-T-->>S: Temporary Credentials
-S-->>A: TURN Credentials
-S-->>B: TURN Credentials
-
-Note over A,B: WebRTC Connection Established
-
-A->>B: X25519 Key Exchange
-B->>A: Ed25519 Identity Verification
-
-Note over A,B: AES-256-GCM Session Keys
-
-A->>B: End-to-End Encrypted Messages
-B->>A: End-to-End Encrypted Messages
-```
+<p align="center">
+  <img src="assets/sequence-diagram.png" alt="PChat Banner" width="100%">
+</p>
 
 ### Encryption layers
 
@@ -229,35 +180,9 @@ For Windows users, open the Users folder, then your account folder, and locate t
 
 ---
 
-## Development
+## Contributing
 
-### Makefile targets
-
-```bash
-make build       # Build for current platform
-make build-all   # Cross-compile for all supported platforms
-make run         # Run the CLI
-make clean       # Remove build artifacts
-make install     # go install into $GOPATH/bin
-make test        # Run tests
-make lint        # Run go vet
-```
-
-### Cross-compilation
-
-```bash
-make build-all
-```
-
-Output binaries are placed in the `bin/` directory:
-
-```
-bin/pchat-linux-amd64
-bin/pchat-linux-arm64
-bin/pchat-darwin-amd64
-bin/pchat-darwin-arm64
-bin/pchat-windows-amd64.exe
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, running tests, and contribution guidelines.
 
 ---
 
