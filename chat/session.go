@@ -6,6 +6,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -65,6 +66,23 @@ func (s *Session) cleanup() {
 	}
 }
 
+type msgType int
+
+const (
+	msgTypePeer msgType = iota
+	msgTypeOwn
+	msgTypeSystem
+	msgTypeWarning
+	msgTypeError
+)
+
+type chatMessage struct {
+	timestamp time.Time
+	username  string
+	text      string
+	msgType   msgType
+}
+
 type incomingMsg struct {
 	username string
 	text     string
@@ -75,7 +93,7 @@ type systemMsg struct {
 }
 
 type connStateMsg struct {
-	state string
+	state connState
 	text  string
 }
 
@@ -85,24 +103,93 @@ type inviteResultMsg struct {
 }
 
 type model struct {
-	session    *Session
-	viewport   viewport.Model
-	textInput  textinput.Model
-	messages   []string
-	width      int
-	height     int
-	ready      bool
-	connStatus string
+	session      *Session
+	viewport     viewport.Model
+	textInput    textinput.Model
+	chatMsgs     []chatMessage
+	styledLns    []string
+	width        int
+	height       int
+	ready        bool
+	connState    connState
+	unreadCnt    int
+	lastPeerWid  int
 }
 
 func (m *model) Init() tea.Cmd {
 	return textinput.Blink
 }
 
-func (m *model) addMessage(text string) {
-	m.messages = append(m.messages, text)
-	m.viewport.SetContent(strings.Join(m.messages, "\n"))
-	m.viewport.GotoBottom()
+func (m *model) updateVpHeight() {
+	headerH := 6
+	inputH := 3
+	indicatorH := 0
+	if m.unreadCnt > 0 {
+		indicatorH = 1
+	}
+	m.viewport.Height = m.height - headerH - inputH - indicatorH
+}
+
+func (m *model) buildVpContent() string {
+	return strings.Join(m.styledLns, "\n")
+}
+
+func (m *model) refreshVp() {
+	m.viewport.SetContent(m.buildVpContent())
+}
+
+func (m *model) styleMessage(msg chatMessage) string {
+	ts := formatTimestamp(msg.timestamp)
+	switch msg.msgType {
+	case msgTypePeer:
+		showSender := true
+		if len(m.chatMsgs) > 0 {
+			last := m.chatMsgs[len(m.chatMsgs)-1]
+			if last.msgType == msgTypePeer && last.username == msg.username &&
+				msg.timestamp.Sub(last.timestamp) <= 2*time.Minute {
+				showSender = false
+			}
+		}
+		if showSender {
+			m.lastPeerWid = lipgloss.Width("[" + msg.username + "]  ")
+			return StylePeerMessage(msg.username, msg.text, ts)
+		}
+		return StyleGroupedMessage(m.lastPeerWid, msg.text, ts)
+	case msgTypeOwn:
+		return StyleOwnMessage(msg.text, ts)
+	case msgTypeSystem:
+		return StyleSystemMessage(msg.text, ts)
+	case msgTypeWarning:
+		return StyleWarningMessage(msg.text, ts)
+	case msgTypeError:
+		return StyleErrorMessage(msg.text, ts)
+	}
+	return ""
+}
+
+func (m *model) addMessage(msg chatMessage) {
+	msg.timestamp = time.Now()
+	styled := m.styleMessage(msg)
+	m.chatMsgs = append(m.chatMsgs, msg)
+	m.styledLns = append(m.styledLns, styled)
+	wasBottom := m.viewport.AtBottom()
+	if wasBottom {
+		m.refreshVp()
+		m.viewport.GotoBottom()
+	} else {
+		m.unreadCnt++
+		m.updateVpHeight()
+		m.refreshVp()
+	}
+}
+
+func (m *model) clearUnread() {
+	if m.unreadCnt == 0 {
+		return
+	}
+	m.unreadCnt = 0
+	m.updateVpHeight()
+	m.refreshVp()
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -110,47 +197,80 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		headerHeight := 8
-		verticalMargin := headerHeight + 1
+		headerH := 6
+		inputH := 3
+		indicatorH := 0
+		if m.unreadCnt > 0 {
+			indicatorH = 1
+		}
+		vpHeight := m.height - headerH - inputH - indicatorH
 		if !m.ready {
-			m.viewport = viewport.New(msg.Width, msg.Height-verticalMargin)
-			m.viewport.YPosition = headerHeight
+			m.viewport = viewport.New(msg.Width, vpHeight)
+			m.viewport.YPosition = headerH
+			m.viewport.MouseWheelEnabled = true
 			m.ready = true
 		} else {
 			m.viewport.Width = msg.Width
-			m.viewport.Height = msg.Height - verticalMargin
+			m.viewport.Height = vpHeight
 		}
-		m.textInput.Width = msg.Width - 2
-		if len(m.messages) > 0 {
-			m.viewport.SetContent(strings.Join(m.messages, "\n"))
+		m.textInput.Width = msg.Width - 6
+		if len(m.styledLns) > 0 {
+			m.viewport.SetContent(m.buildVpContent())
 		}
 		return m, nil
 
+	case tea.MouseMsg:
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		if m.viewport.AtBottom() {
+			m.clearUnread()
+		}
+		return m, cmd
+
 	case incomingMsg:
-		m.addMessage(StylePeerMessage(msg.username, msg.text))
+		m.addMessage(chatMessage{msgType: msgTypePeer, username: msg.username, text: msg.text})
 		return m, nil
 
 	case systemMsg:
-		m.addMessage(StyleSystemMessage(msg.text))
+		m.addMessage(chatMessage{msgType: msgTypeSystem, text: msg.text})
 		return m, nil
 
 	case connStateMsg:
-		m.connStatus = msg.state
+		m.connState = msg.state
 		if msg.text != "" {
-			m.addMessage(StyleSystemMessage(msg.text))
+			m.addMessage(chatMessage{msgType: msgTypeSystem, text: msg.text})
 		}
 		return m, nil
 
 	case inviteResultMsg:
 		if msg.err != nil {
-			m.addMessage(StyleErrorMessage("Failed to create invite"))
+			m.addMessage(chatMessage{msgType: msgTypeError, text: "Failed to create invite"})
 		} else {
-			m.addMessage(StyleSystemMessage(fmt.Sprintf("Invite code: %s", msg.code)))
+			m.addMessage(chatMessage{msgType: msgTypeSystem, text: fmt.Sprintf("Invite code: %s", msg.code)})
 		}
 		return m, nil
 
 	case tea.KeyMsg:
 		switch msg.Type {
+		case tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
+			var cmd tea.Cmd
+			m.viewport, cmd = m.viewport.Update(msg)
+			if m.viewport.AtBottom() {
+				m.clearUnread()
+			}
+			return m, cmd
+
+		case tea.KeyCtrlU:
+			m.viewport.HalfViewUp()
+			return m, nil
+
+		case tea.KeyCtrlD:
+			m.viewport.HalfViewDown()
+			if m.viewport.AtBottom() {
+				m.clearUnread()
+			}
+			return m, nil
+
 		case tea.KeyCtrlC:
 			m.session.cleanup()
 			return m, tea.Quit
@@ -167,15 +287,19 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 
 			case val == "/help":
-				m.addMessage(StyleHelp())
+				m.styledLns = append(m.styledLns, StyleHelp())
+				m.refreshVp()
 				return m, nil
 
 			case val == "/members":
-				m.addMessage(m.session.formatMembers())
+				m.styledLns = append(m.styledLns, m.session.formatMembers())
+				m.refreshVp()
 				return m, nil
 
 			case val == "/clear":
-				m.messages = nil
+				m.chatMsgs = nil
+				m.styledLns = nil
+				m.unreadCnt = 0
 				m.viewport.SetContent("")
 				return m, nil
 
@@ -191,14 +315,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			case strings.HasPrefix(val, "/"):
-				m.addMessage(StyleErrorMessage(fmt.Sprintf("Unknown command: %s", val)))
+				m.addMessage(chatMessage{msgType: msgTypeError, text: fmt.Sprintf("Unknown command: %s", val)})
 				return m, nil
 
 			default:
 				if err := m.session.peer.SendMessage([]byte(val)); err != nil {
-					m.addMessage(StyleErrorMessage("Failed to send message"))
+					m.addMessage(chatMessage{msgType: msgTypeError, text: "Failed to send message"})
 				} else {
-					m.addMessage(StyleOwnMessage(val))
+					m.addMessage(chatMessage{msgType: msgTypeOwn, text: val})
 				}
 				return m, nil
 			}
@@ -217,10 +341,14 @@ func (m *model) View() string {
 	if !m.ready {
 		return "\n  Initializing..."
 	}
-	header := RenderHeader(m.session.cfg.RoomName, m.session.cfg.Username, m.connStatus)
-	inputPrompt := lipgloss.NewStyle().Foreground(lipgloss.Color("#8B8B8B")).Render("❯ ")
-	m.textInput.Prompt = inputPrompt
-	return fmt.Sprintf("%s\n%s\n%s", header, m.viewport.View(), m.textInput.View())
+	header := RenderHeader(m.width, m.session.cfg.RoomName, m.session.cfg.Username, m.connState)
+	indicator := ""
+	if m.unreadCnt > 0 {
+		indicator = RenderUnreadIndicator(m.unreadCnt) + "\n"
+	}
+	inputView := m.textInput.View()
+	renderedInput := RenderInput(inputView, m.width, m.textInput.Focused())
+	return header + m.viewport.View() + "\n" + indicator + renderedInput
 }
 
 func (s *Session) formatMembers() string {
@@ -259,10 +387,11 @@ func (s *Session) Start() error {
 	ti.CharLimit = 0
 
 	m := &model{
-		session:    s,
-		textInput:  ti,
-		connStatus: "🟡 Connecting...",
-		messages:   make([]string, 0, 64),
+		session:   s,
+		textInput: ti,
+		connState: StateConnecting,
+		chatMsgs:  make([]chatMessage, 0, 64),
+		styledLns: make([]string, 0, 64),
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
@@ -311,13 +440,13 @@ func (s *Session) Start() error {
 		OnConnectionStateChange: func(state rtc.ConnectionState) {
 			switch state {
 			case rtc.ConnectionStateConnected:
-				s.program.Send(connStateMsg{state: "🟢 Connected", text: "🟢 Connected to room"})
+				s.program.Send(connStateMsg{state: StateConnected, text: "Connected to room"})
 			case rtc.ConnectionStateConnecting:
-				s.program.Send(connStateMsg{state: "🟡 Connecting...", text: ""})
+				s.program.Send(connStateMsg{state: StateConnecting, text: ""})
 			case rtc.ConnectionStateDisconnected:
-				s.program.Send(connStateMsg{state: "🔴 Disconnected", text: "⚠ Connection lost"})
+				s.program.Send(connStateMsg{state: StateDisconnected, text: "Connection lost"})
 			case rtc.ConnectionStateFailed:
-				s.program.Send(connStateMsg{state: "🔴 Failed", text: "🔴 Disconnected"})
+				s.program.Send(connStateMsg{state: StateFailed, text: "Disconnected"})
 			}
 		},
 	})

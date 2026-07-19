@@ -10,6 +10,10 @@
 
 **PChat** is an end-to-end encrypted peer-to-peer terminal chat client. It uses WebRTC DataChannels for direct peer-to-peer communication with no server-side message storage messages exist only in memory for currently connected peers.
 
+<p align="center">
+  <img src="assets/pchat.png" alt="PChat Banner" width="100%">
+</p>
+
 ---
 
 ## Installation
