@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -105,7 +105,7 @@ type inviteResultMsg struct {
 type model struct {
 	session      *Session
 	viewport     viewport.Model
-	textInput    textinput.Model
+	textArea     textarea.Model
 	chatMsgs     []chatMessage
 	styledLns    []string
 	width        int
@@ -117,17 +117,20 @@ type model struct {
 }
 
 func (m *model) Init() tea.Cmd {
-	return textinput.Blink
+	return textarea.Blink
+}
+
+func (m *model) inputHeight() int {
+	return m.textArea.Height() + 2
 }
 
 func (m *model) updateVpHeight() {
 	headerH := 6
-	inputH := 3
 	indicatorH := 0
 	if m.unreadCnt > 0 {
 		indicatorH = 1
 	}
-	m.viewport.Height = m.height - headerH - inputH - indicatorH
+	m.viewport.Height = m.height - headerH - m.inputHeight() - indicatorH
 }
 
 func (m *model) buildVpContent() string {
@@ -138,38 +141,145 @@ func (m *model) refreshVp() {
 	m.viewport.SetContent(m.buildVpContent())
 }
 
-func (m *model) styleMessage(msg chatMessage) string {
+func (m *model) styleMessage(msg chatMessage, prevMsg *chatMessage) string {
 	ts := formatTimestamp(msg.timestamp)
+	vpWidth := m.width
+	if vpWidth <= 0 {
+		vpWidth = 80
+	}
+
 	switch msg.msgType {
 	case msgTypePeer:
 		showSender := true
-		if len(m.chatMsgs) > 0 {
-			last := m.chatMsgs[len(m.chatMsgs)-1]
-			if last.msgType == msgTypePeer && last.username == msg.username &&
-				msg.timestamp.Sub(last.timestamp) <= 2*time.Minute {
-				showSender = false
-			}
+		if prevMsg != nil && prevMsg.msgType == msgTypePeer && prevMsg.username == msg.username &&
+			msg.timestamp.Sub(prevMsg.timestamp) <= 2*time.Minute {
+			showSender = false
 		}
 		if showSender {
-			m.lastPeerWid = lipgloss.Width("[" + msg.username + "]  ")
-			return StylePeerMessage(msg.username, msg.text, ts)
+			prefix := lipgloss.NewStyle().Bold(true).Foreground(hashColor(msg.username)).Render("[" + msg.username + "]")
+			prefixWidth := lipgloss.Width("[" + msg.username + "]  ")
+			m.lastPeerWid = prefixWidth
+
+			textWidth := vpWidth - prefixWidth
+			if textWidth < 10 {
+				textWidth = 10
+			}
+			wrapped := wrapText(msg.text, textWidth)
+			lines := strings.Split(wrapped, "\n")
+
+			indent := strings.Repeat(" ", prefixWidth)
+			tsStyled := lipgloss.NewStyle().Foreground(lipgloss.Color("#6C757D")).Render("  " + ts)
+
+			var b strings.Builder
+			for i, line := range lines {
+				if i == 0 {
+					b.WriteString(prefix)
+					b.WriteString("  ")
+					b.WriteString(line)
+				} else {
+					b.WriteString(indent)
+					b.WriteString(line)
+				}
+				if i < len(lines)-1 {
+					b.WriteString("\n")
+				}
+			}
+			b.WriteString(tsStyled)
+			return b.String()
 		}
-		return StyleGroupedMessage(m.lastPeerWid, msg.text, ts)
+
+		indent := strings.Repeat(" ", m.lastPeerWid)
+		textWidth := vpWidth - m.lastPeerWid
+		if textWidth < 10 {
+			textWidth = 10
+		}
+		wrapped := wrapText(msg.text, textWidth)
+		lines := strings.Split(wrapped, "\n")
+		tsStyled := lipgloss.NewStyle().Foreground(lipgloss.Color("#6C757D")).Render("  " + ts)
+
+		var b strings.Builder
+		for i, line := range lines {
+			b.WriteString(indent)
+			b.WriteString(line)
+			if i < len(lines)-1 {
+				b.WriteString("\n")
+			}
+		}
+		b.WriteString(tsStyled)
+		return b.String()
+
 	case msgTypeOwn:
-		return StyleOwnMessage(msg.text, ts)
+		prefix := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#20C997")).Render("You >")
+		prefixWidth := lipgloss.Width("You >  ")
+
+		textWidth := vpWidth - prefixWidth
+		if textWidth < 10 {
+			textWidth = 10
+		}
+		wrapped := wrapText(msg.text, textWidth)
+		lines := strings.Split(wrapped, "\n")
+
+		indent := strings.Repeat(" ", prefixWidth)
+		tsStyled := lipgloss.NewStyle().Foreground(lipgloss.Color("#6C757D")).Render("  " + ts)
+
+		var b strings.Builder
+		for i, line := range lines {
+			if i == 0 {
+				b.WriteString(prefix)
+				b.WriteString("  ")
+				b.WriteString(line)
+			} else {
+				b.WriteString(indent)
+				b.WriteString(line)
+			}
+			if i < len(lines)-1 {
+				b.WriteString("\n")
+			}
+		}
+		b.WriteString(tsStyled)
+		return b.String()
+
 	case msgTypeSystem:
-		return StyleSystemMessage(msg.text, ts)
+		text := "✓ " + msg.text
+		tsStyled := lipgloss.NewStyle().Foreground(lipgloss.Color("#6C757D")).Render("  " + ts)
+		wrapped := wrapText(text, vpWidth-lipgloss.Width("  "+ts)-2)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#8B8B8B")).Render(wrapped) + tsStyled
+
 	case msgTypeWarning:
-		return StyleWarningMessage(msg.text, ts)
+		text := "⚠ " + msg.text
+		tsStyled := lipgloss.NewStyle().Foreground(lipgloss.Color("#6C757D")).Render("  " + ts)
+		wrapped := wrapText(text, vpWidth-lipgloss.Width("  "+ts)-2)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD43B")).Render(wrapped) + tsStyled
+
 	case msgTypeError:
-		return StyleErrorMessage(msg.text, ts)
+		text := "✗ " + msg.text
+		tsStyled := lipgloss.NewStyle().Foreground(lipgloss.Color("#6C757D")).Render("  " + ts)
+		wrapped := wrapText(text, vpWidth-lipgloss.Width("  "+ts)-2)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6B6B")).Render(wrapped) + tsStyled
 	}
 	return ""
 }
 
+func (m *model) restyleAllMessages() {
+	m.styledLns = make([]string, 0, len(m.chatMsgs))
+	m.lastPeerWid = 0
+	for i, msg := range m.chatMsgs {
+		var prev *chatMessage
+		if i > 0 {
+			prev = &m.chatMsgs[i-1]
+		}
+		m.styledLns = append(m.styledLns, m.styleMessage(msg, prev))
+	}
+	m.refreshVp()
+}
+
 func (m *model) addMessage(msg chatMessage) {
 	msg.timestamp = time.Now()
-	styled := m.styleMessage(msg)
+	var prev *chatMessage
+	if len(m.chatMsgs) > 0 {
+		prev = &m.chatMsgs[len(m.chatMsgs)-1]
+	}
+	styled := m.styleMessage(msg, prev)
 	m.chatMsgs = append(m.chatMsgs, msg)
 	m.styledLns = append(m.styledLns, styled)
 	wasBottom := m.viewport.AtBottom()
@@ -194,16 +304,16 @@ func (m *model) clearUnread() {
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
+  case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		headerH := 6
-		inputH := 3
 		indicatorH := 0
 		if m.unreadCnt > 0 {
 			indicatorH = 1
 		}
-		vpHeight := m.height - headerH - inputH - indicatorH
+		m.textArea.SetWidth(msg.Width - 6)
+		vpHeight := m.height - headerH - m.inputHeight() - indicatorH
 		if !m.ready {
 			m.viewport = viewport.New(msg.Width, vpHeight)
 			m.viewport.YPosition = headerH
@@ -213,9 +323,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.Width = msg.Width
 			m.viewport.Height = vpHeight
 		}
-		m.textInput.Width = msg.Width - 6
-		if len(m.styledLns) > 0 {
-			m.viewport.SetContent(m.buildVpContent())
+		if len(m.chatMsgs) > 0 {
+			m.restyleAllMessages()
 		}
 		return m, nil
 
@@ -260,24 +369,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, cmd
 
-		case tea.KeyCtrlU:
-			m.viewport.HalfViewUp()
-			return m, nil
-
-		case tea.KeyCtrlD:
-			m.viewport.HalfViewDown()
-			if m.viewport.AtBottom() {
-				m.clearUnread()
-			}
-			return m, nil
-
 		case tea.KeyCtrlC:
 			m.session.cleanup()
 			return m, tea.Quit
 
 		case tea.KeyEnter:
-			val := strings.TrimSpace(m.textInput.Value())
-			m.textInput.Reset()
+			if msg.Alt {
+				var cmd tea.Cmd
+				m.textArea, cmd = m.textArea.Update(msg)
+				m.updateVpHeight()
+				return m, cmd
+			}
+			val := strings.TrimSpace(m.textArea.Value())
+			m.textArea.Reset()
+			m.updateVpHeight()
 			if val == "" {
 				return m, nil
 			}
@@ -326,11 +431,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-		}
 
-		var cmd tea.Cmd
-		m.textInput, cmd = m.textInput.Update(msg)
-		return m, cmd
+		case tea.KeyCtrlJ:
+			// Ctrl+J (\n): insert newline via synthetic KeyEnter (textarea handles "enter" key)
+			var cmd tea.Cmd
+			m.textArea, cmd = m.textArea.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			m.updateVpHeight()
+			return m, cmd
+
+		default:
+			var cmd tea.Cmd
+			m.textArea, cmd = m.textArea.Update(msg)
+			m.updateVpHeight()
+			return m, cmd
+		}
 
 	default:
 		return m, nil
@@ -346,8 +460,8 @@ func (m *model) View() string {
 	if m.unreadCnt > 0 {
 		indicator = RenderUnreadIndicator(m.unreadCnt) + "\n"
 	}
-	inputView := m.textInput.View()
-	renderedInput := RenderInput(inputView, m.width, m.textInput.Focused())
+	inputView := m.textArea.View()
+	renderedInput := RenderInput(inputView, m.width, m.textArea.Focused())
 	return header + m.viewport.View() + "\n" + indicator + renderedInput
 }
 
@@ -381,14 +495,16 @@ func (s *Session) Start() error {
 	s.wsClient = wsClient
 	defer wsClient.Close()
 
-	ti := textinput.New()
-	ti.Placeholder = "Type a message..."
-	ti.Focus()
-	ti.CharLimit = 0
+	ta := textarea.New()
+	ta.Placeholder = "Type a message..."
+	ta.ShowLineNumbers = false
+	ta.Prompt = ""
+	ta.MaxHeight = 6
+	ta.Focus()
 
 	m := &model{
 		session:   s,
-		textInput: ti,
+		textArea:  ta,
 		connState: StateConnecting,
 		chatMsgs:  make([]chatMessage, 0, 64),
 		styledLns: make([]string, 0, 64),

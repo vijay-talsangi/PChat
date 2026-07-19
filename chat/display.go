@@ -183,3 +183,42 @@ func RenderInput(inputView string, width int, focused bool) string {
 		Padding(0, 1).
 		Render(inputView)
 }
+
+// wrapText wraps text to the given width, breaking long words without spaces.
+func wrapText(text string, width int) string {
+	if width <= 0 {
+		return text
+	}
+	var lines []string
+	var cur strings.Builder
+	for _, word := range strings.Fields(text) {
+		for len(word) > width {
+			if cur.Len() > 0 {
+				lines = append(lines, cur.String())
+				cur.Reset()
+			}
+			lines = append(lines, word[:width])
+			word = word[width:]
+		}
+		proposed := word
+		if cur.Len() > 0 {
+			proposed = cur.String() + " " + word
+		}
+		if lipgloss.Width(proposed) <= width {
+			if cur.Len() > 0 {
+				cur.WriteString(" ")
+			}
+			cur.WriteString(word)
+		} else {
+			if cur.Len() > 0 {
+				lines = append(lines, cur.String())
+				cur.Reset()
+			}
+			cur.WriteString(word)
+		}
+	}
+	if cur.Len() > 0 {
+		lines = append(lines, cur.String())
+	}
+	return strings.Join(lines, "\n")
+}
