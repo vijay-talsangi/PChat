@@ -8,7 +8,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/vijay-talsangi/PChat)](https://github.com/vijay-talsangi/PChat/releases/latest)
 
-**PChat** is an end-to-end encrypted peer-to-peer terminal chat client. It uses WebRTC DataChannels for direct peer-to-peer communication with no server-side message storage — messages exist only in memory for currently connected peers.
+**PChat** is an end-to-end encrypted peer-to-peer terminal chat client. It uses WebRTC DataChannels for direct peer-to-peer communication with no server-side message storage messages exist only in memory for currently connected peers.
 
 ---
 
@@ -123,6 +123,64 @@ pchat enter "Room Name"                 Enter interactive chat session
 
 ## Architecture
 
+<p align="center">
+  <img src="assets/architecture.png" alt="PChat Banner" width="100%">
+</p>
+
+### Sequence Diagram
+```mermaid
+sequenceDiagram
+
+participant A as Client A
+participant S as Signaling Server
+participant DB as PostgreSQL
+participant T as TURN Server
+participant B as Client B
+
+A->>S: Login (JWT)
+S->>DB: Validate User
+DB-->>S: OK
+S-->>A: JWT Token
+
+A->>S: Create Room
+S->>DB: Store Room
+DB-->>S: Success
+
+A->>S: Generate Invite
+S-->>A: Invite Token
+
+A->>B: Share Invite Token
+
+B->>S: Redeem Invite
+S->>DB: Validate Invite
+DB-->>S: OK
+S-->>B: Room Access
+
+A->>S: Start Signaling
+B->>S: Join Signaling
+
+S->>A: SDP Offer
+S->>B: SDP Offer
+
+A->>S: ICE Candidates
+B->>S: ICE Candidates
+
+S->>T: Request TURN Credentials
+T-->>S: Temporary Credentials
+S-->>A: TURN Credentials
+S-->>B: TURN Credentials
+
+Note over A,B: WebRTC Connection Established
+
+A->>B: X25519 Key Exchange
+B->>A: Ed25519 Identity Verification
+
+Note over A,B: AES-256-GCM Session Keys
+
+A->>B: End-to-End Encrypted Messages
+B->>A: End-to-End Encrypted Messages
+```
+
 ### Encryption layers
 
 1. **X25519** — key exchange for room key distribution
@@ -144,7 +202,9 @@ pchat enter "Room Name"                 Enter interactive chat session
 
 ## Configuration
 
-Configuration is stored at `~/.pchat/config.json`:
+Configuration is stored at (Linux/macOS) `~/.pchat/config.json`: 
+
+For Windows users, open the Users folder, then your account folder, and locate the .pchat folder (it may be hidden).
 
 ```json
 {
@@ -158,14 +218,6 @@ Configuration is stored at `~/.pchat/config.json`:
   "ed25519_private_key": "..."
 }
 ```
-
-Set the server URL via the `SERVER_URL` environment variable:
-
-```bash
-export SERVER_URL=https://your-server.com
-```
-
----
 
 ## Key management
 
