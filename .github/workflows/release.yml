@@ -3,9 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
-  release:
-    types: [published]
+      - "v*" # This is the ONLY trigger you need
 
 permissions:
   contents: write
@@ -17,7 +15,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0 # Crucial: GoReleaser needs the full history to see tags
 
       - name: Set up Go
         uses: actions/setup-go@v5
