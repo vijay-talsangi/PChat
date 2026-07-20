@@ -23,7 +23,7 @@ builds:
       - "7"
     ignore: []
     ldflags:
-      - -s -w -X github.com/vijay-talsangi/PChat/cmd/pchat.version={{.Version}} -X github.com/vijay-talsangi/PChat/cmd/pchat.commit={{.Commit}} -X github.com/vijay-talsangi/PChat/cmd/pchat.date={{.Date}}
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
 
 archives:
   - formats:
