@@ -78,7 +78,19 @@ var loginCmd = &cobra.Command{
 		cfg.JWT = resp.Token
 		cfg.UserID = resp.User.ID
 		cfg.Username = resp.User.Username
-		cfg.X25519PublicKey = resp.User.PublicKey
+		// This is decision to allow only one trusted device
+		// Login to new device with registered account in different device: NOT ALLOWED
+		// Lost config and trying to login: NOT ALLOWED
+		if cfg.X25519PublicKey == "" ||
+			cfg.X25519PrivateKey == "" ||
+			cfg.Ed25519PublicKey == "" ||
+			cfg.Ed25519PrivateKey == "" {
+			return fmt.Errorf("cryptographic identity is missing. This client supports only one trusted device. Please register a new account or restore your key backup")
+		}
+		// Trying to login with tampered keys: NOT ALLOWED
+		if cfg.X25519PublicKey != resp.User.PublicKey {
+			return fmt.Errorf("local identity does not match server identity")
+		}
 		if err := config.Save(cfg); err != nil {
 			return fmt.Errorf("failed to save config: %w", err)
 		}
